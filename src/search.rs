@@ -2,11 +2,18 @@ use crate::config::Config;
 use crate::errors::{SearxngError, SearxngResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::time::Duration;
 
+const USER_AGENT: &str = "searxng-mcp/0.1";
+const DEFAULT_FORMAT: &str = "json";
+const VALID_TIME_RANGES: &[&str] = &["day", "month", "year"];
+const MAX_SAFE_SEARCH_LEVEL: u8 = 2;
+const MAX_CONTENT_LENGTH: usize = 200;
+const MAX_HTTP_CLIENT_POOL_SIZE: usize = 3;
+const HTTP_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_HTTP_REQUEST_RETRY: u32 = 3;
+
 #[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)]
 pub struct SearchParams {
     pub q: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -26,11 +33,10 @@ pub struct SearchParams {
 }
 
 impl SearchParams {
-    #[allow(dead_code)]
     pub fn new(query: String) -> Self {
         Self {
             q: query,
-            format: Some("json".to_string()),
+            format: Some(DEFAULT_FORMAT.to_string()),
             categories: None,
             engines: None,
             language: None,
@@ -40,41 +46,33 @@ impl SearchParams {
         }
     }
 
-    #[allow(dead_code)]
     pub fn with_categories(mut self, categories: String) -> Self {
         self.categories = Some(categories);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_engines(mut self, engines: String) -> Self {
         self.engines = Some(engines);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_language(mut self, language: String) -> Self {
         self.language = Some(language);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_page(mut self, page: u32) -> Self {
         self.pageno = Some(page);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_time_range(mut self, time_range: String) -> Self {
         self.time_range = Some(time_range);
         self
     }
 
-    #[allow(dead_code)]
     pub fn with_safe_search(mut self, level: u8) -> Self {
-        if level <= 2 {
-            self.safesearch = Some(level);
-        }
+        self.safesearch = Some(level);
         self
     }
 
@@ -86,7 +84,7 @@ impl SearchParams {
         }
 
         if let Some(ref time_range) = self.time_range {
-            if !["day", "month", "year"].contains(&time_range.as_str()) {
+            if !VALID_TIME_RANGES.contains(&time_range.as_str()) {
                 return Err(SearxngError::InvalidParameters(
                     "Time range must be 'day', 'month', or 'year'".to_string(),
                 ));
@@ -94,7 +92,7 @@ impl SearchParams {
         }
 
         if let Some(safesearch) = self.safesearch {
-            if safesearch > 2 {
+            if safesearch > MAX_SAFE_SEARCH_LEVEL {
                 return Err(SearxngError::InvalidParameters(
                     "Safe search level must be 0, 1, or 2".to_string(),
                 ));
@@ -124,7 +122,7 @@ pub struct SearchResult {
 #[allow(dead_code)]
 pub struct SearchResponse {
     pub query: String,
-    pub number_of_results: u64,
+    pub number_of_results: u64, // This property seems to always be 0, so ignore it and get the true result count from results.len()
     pub results: Vec<SearchResult>,
     #[serde(default)]
     pub engines: Vec<EngineInfo>,
@@ -163,7 +161,9 @@ impl SearxngClient {
     pub fn new(config: Config) -> SearxngResult<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
-            .user_agent("searxng-mcp/0.1.0")
+            .user_agent(USER_AGENT)
+            .pool_max_idle_per_host(MAX_HTTP_CLIENT_POOL_SIZE)
+            .pool_idle_timeout(HTTP_CLIENT_IDLE_TIMEOUT)
             .build()
             .map_err(SearxngError::HttpError)?;
 
@@ -171,36 +171,16 @@ impl SearxngClient {
     }
 
     #[allow(dead_code)]
-    pub async fn search(&self, params: SearchParams) -> SearxngResult<SearchResponse> {
+    pub async fn search(&self, mut params: SearchParams) -> SearxngResult<SearchResponse> {
         params.validate()?;
 
-        let mut query_params = HashMap::new();
-        query_params.insert("q", params.q.clone());
-        query_params.insert("format", "json".to_string());
-
-        if let Some(categories) = &params.categories {
-            query_params.insert("categories", categories.clone());
-        }
-        if let Some(engines) = &params.engines {
-            query_params.insert("engines", engines.clone());
-        }
-        if let Some(language) = &params.language {
-            query_params.insert("language", language.clone());
-        }
-        if let Some(pageno) = params.pageno {
-            query_params.insert("pageno", pageno.to_string());
-        }
-        if let Some(time_range) = &params.time_range {
-            query_params.insert("time_range", time_range.clone());
-        }
-        if let Some(safesearch) = params.safesearch {
-            query_params.insert("safesearch", safesearch.to_string());
-        }
+        // Ensure format is always set to json for API responses
+        params.format = Some(DEFAULT_FORMAT.to_string());
 
         let response = self
             .client
             .get(self.config.search_url())
-            .query(&query_params)
+            .query(&params)
             .send()
             .await
             .map_err(SearxngError::HttpError)?;
@@ -220,6 +200,54 @@ impl SearxngClient {
     }
 
     #[allow(dead_code)]
+    pub async fn search_with_retry(&self, params: SearchParams) -> SearxngResult<SearchResponse> {
+        self.search_with_retry_impl(params, MAX_HTTP_REQUEST_RETRY)
+            .await
+    }
+
+    fn is_retryable_error(error: &SearxngError) -> bool {
+        match error {
+            SearxngError::HttpError(reqwest_error) => {
+                // Retry on network timeouts, connection errors, and 5xx server errors
+                reqwest_error.is_timeout()
+                    || reqwest_error.is_connect()
+                    || reqwest_error
+                        .status()
+                        .is_some_and(|status| status.is_server_error())
+            }
+            SearxngError::ApiError(_) => {
+                // Retry on API errors that might be transient
+                true
+            }
+            _ => false,
+        }
+    }
+
+    #[allow(dead_code)]
+    async fn search_with_retry_impl(
+        &self,
+        params: SearchParams,
+        max_retries: u32,
+    ) -> SearxngResult<SearchResponse> {
+        let mut last_error = None;
+
+        for attempt in 0..max_retries {
+            match self.search(params.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(e) if attempt < max_retries - 1 && Self::is_retryable_error(&e) => {
+                    let delay_ms = 100 * (attempt + 1) as u64;
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    last_error = Some(e);
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(last_error
+            .unwrap_or_else(|| SearxngError::ApiError("Max retries exceeded".to_string())))
+    }
+
     pub fn format_results(&self, response: &SearchResponse) -> String {
         if response.results.is_empty() {
             return "No results found for your search query.".to_string();
@@ -228,7 +256,7 @@ impl SearxngClient {
         let mut formatted = String::new();
 
         formatted.push_str(&format!("Search Results for: \"{}\"\n", response.query));
-        formatted.push_str(&format!("Found {} results\n\n", response.number_of_results));
+        formatted.push_str(&format!("Found {} results\n\n", response.results.len()));
 
         let results_to_show = response.results.iter().take(self.config.max_results);
 
@@ -237,8 +265,8 @@ impl SearxngClient {
             formatted.push_str(&format!("   URL: {}\n", result.url));
 
             if !result.content.is_empty() {
-                let content = if result.content.len() > 200 {
-                    format!("{}...", &result.content[..200])
+                let content = if result.content.len() > MAX_CONTENT_LENGTH {
+                    format!("{}...", &result.content[..MAX_CONTENT_LENGTH])
                 } else {
                     result.content.clone()
                 };
@@ -298,6 +326,59 @@ mod tests {
         assert_eq!(params.safesearch, Some(1));
     }
 
+    #[test]
+    fn test_search_params_validation() {
+        let valid_params = SearchParams::new("test query".to_string())
+            .with_safe_search(1)
+            .with_time_range("day".to_string());
+        assert!(valid_params.validate().is_ok());
+
+        let invalid_safe_search = SearchParams::new("test query".to_string()).with_safe_search(5); // Invalid: > 2
+        assert!(invalid_safe_search.validate().is_err());
+
+        let invalid_time_range =
+            SearchParams::new("test query".to_string()).with_time_range("invalid".to_string());
+        assert!(invalid_time_range.validate().is_err());
+
+        let empty_query = SearchParams::new("   ".to_string());
+        assert!(empty_query.validate().is_err());
+    }
+
+    #[test]
+    fn test_search_params_serialization() {
+        let params = SearchParams::new("test query".to_string())
+            .with_categories("general,news".to_string())
+            .with_language("en".to_string())
+            .with_page(2);
+
+        let mut params_with_format = params.clone();
+        params_with_format.format = Some("json".to_string());
+
+        let serialized = serde_json::to_string(&params_with_format).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+
+        assert!(parsed.get("q").is_some());
+        assert!(parsed.get("format").is_some());
+        assert!(parsed.get("categories").is_some());
+        assert!(parsed.get("language").is_some());
+        assert!(parsed.get("pageno").is_some());
+
+        assert!(parsed.get("engines").is_none());
+        assert!(parsed.get("time_range").is_none());
+        assert!(parsed.get("safesearch").is_none());
+
+        let minimal_params = SearchParams::new("minimal".to_string());
+        let mut minimal_with_format = minimal_params;
+        minimal_with_format.format = Some("json".to_string());
+
+        let minimal_serialized = serde_json::to_string(&minimal_with_format).unwrap();
+        let minimal_parsed: serde_json::Value = serde_json::from_str(&minimal_serialized).unwrap();
+
+        assert_eq!(minimal_parsed.as_object().unwrap().len(), 2);
+        assert!(minimal_parsed.get("q").is_some());
+        assert!(minimal_parsed.get("format").is_some());
+    }
+
     #[tokio::test]
     async fn test_client_creation() {
         let config = Config::default();
@@ -305,12 +386,24 @@ mod tests {
         assert!(client.is_ok());
     }
 
+    #[test]
+    fn test_retryable_error_detection() {
+        let api_error = SearxngError::ApiError("server busy".to_string());
+        assert!(SearxngClient::is_retryable_error(&api_error));
+
+        let param_error = SearxngError::InvalidParameters("invalid query".to_string());
+        assert!(!SearxngClient::is_retryable_error(&param_error));
+
+        let no_results_error = SearxngError::NoResults;
+        assert!(!SearxngClient::is_retryable_error(&no_results_error));
+    }
+
     #[tokio::test]
-    #[ignore = "requires running SearXNG instance at localhost:8888"]
+    #[ignore = "requires running SearXNG instance at localhost:8080"]
     async fn test_search_integration() {
         use std::env;
 
-        env::set_var("SEARXNG_BASE_URL", "http://localhost:8888");
+        env::set_var("SEARXNG_BASE_URL", "http://localhost:8080");
         let config = Config::from_env().expect("Failed to load config");
         let client = SearxngClient::new(config).expect("Failed to create client");
 
@@ -322,10 +415,10 @@ mod tests {
         match result {
             Ok(response) => {
                 assert!(!response.query.is_empty());
-                println!("Search successful: {} results", response.number_of_results);
+                println!("Search successful: {} results", response.results.len());
             }
             Err(e) => {
-                println!("Search failed: {:?}", e);
+                panic!("Search failed: {:?}", e);
             }
         }
     }
