@@ -48,6 +48,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     needs: test
+    if: github.repository == 'mohannad-mamo/websurfx-mcp'
     steps:
       - uses: actions/checkout@v7
 
@@ -65,11 +66,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: |
+            ghcr.io/${{ github.repository }}
+            ${{ secrets.DOCKERHUB_USERNAME || 'mohannad-mamo' }}/websurfx-mcp
           tags: |
             type=sha,prefix=sha-,format=short
             type=raw,value=edge,enable={{is_default_branch}}
@@ -94,7 +105,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     needs: test
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.repository == 'mohannad-mamo/websurfx-mcp'
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
       labels: ${{ steps.meta.outputs.labels }}
@@ -103,7 +114,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one
+          images: |
+            ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one
+            ${{ secrets.DOCKERHUB_USERNAME || 'mohannad-mamo' }}/websurfx-all-in-one
           tags: |
             type=sha,prefix=sha-,format=short
             type=raw,value=edge,enable={{is_default_branch}}
@@ -120,7 +133,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     needs: all-in-one-meta
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.repository == 'mohannad-mamo/websurfx-mcp'
     strategy:
       fail-fast: false
       matrix:
@@ -177,7 +190,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     needs: [all-in-one-meta, all-in-one-build]
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.repository == 'mohannad-mamo/websurfx-mcp'
     steps:
       - name: Download digests
         uses: actions/download-artifact@v8
@@ -196,31 +209,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Create multi-arch manifest
         working-directory: /tmp/digests
         env:
           TAGS: ${{ needs.all-in-one-meta.outputs.tags }}
         run: |
           set -euo pipefail
-          args=()
+          ghcr_args=()
+          dockerhub_args=()
           while IFS= read -r tag; do
             if [ -n "$tag" ]; then
-              args+=("-t" "$tag")
+              case "$tag" in
+                ghcr.io/*) ghcr_args+=("-t" "$tag") ;;
+                *) dockerhub_args+=("-t" "$tag") ;;
+              esac
             fi
           done <<< "$TAGS"
           refs=()
           for digest in *; do
             refs+=("ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one@sha256:${digest}")
           done
-          docker buildx imagetools create "${args[@]}" "${refs[@]}"
-          docker buildx imagetools inspect "${args[1]}"
+          docker buildx imagetools create "${ghcr_args[@]}" "${refs[@]}"
+          if [ "${#dockerhub_args[@]}" -gt 0 ]; then
+            docker buildx imagetools create "${dockerhub_args[@]}" "${refs[@]}"
+          fi
+          docker buildx imagetools inspect "${ghcr_args[1]}"
 
   all-in-one-smoke:
     name: All-in-one smoke
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     needs: all-in-one-merge
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.repository == 'mohannad-mamo/websurfx-mcp'
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@v4
