@@ -95,6 +95,27 @@ impl Config {
         )
         .map_err(WebsurfxError::InvalidEnvVar)?;
 
+        if timeout_seconds == 0 {
+            return Err(WebsurfxError::InvalidEnvVar(format!(
+                "{} must be greater than 0",
+                WEBSURFX_TIMEOUT_SECONDS_KEY
+            )));
+        }
+
+        if max_results == 0 {
+            return Err(WebsurfxError::InvalidEnvVar(format!(
+                "{} must be greater than 0",
+                WEBSURFX_MAX_RESULTS_KEY
+            )));
+        }
+
+        if validation_timeout_seconds == 0 {
+            return Err(WebsurfxError::InvalidEnvVar(format!(
+                "{} must be greater than 0",
+                WEBSURFX_VALIDATION_TIMEOUT_SECONDS_KEY
+            )));
+        }
+
         Ok(Config {
             base_url,
             timeout_seconds,
@@ -313,6 +334,19 @@ mod tests {
                 }),
             },
             TestCase {
+                name: "zero_timeout_returns_error",
+                vars_to_set: vec![(WEBSURFX_TIMEOUT_SECONDS_KEY, "0")],
+                checker: Box::new(|name, result| {
+                    assert!(result.is_err(), "Test case '{}' failed", name);
+                    assert_eq!(
+                        result.unwrap_err().user_message(),
+                        "Invalid environment variable: WEBSURFX_TIMEOUT_SECONDS must be greater than 0",
+                        "Test case '{}' failed",
+                        name
+                    );
+                }),
+            },
+            TestCase {
                 name: "invalid_max_results_value",
                 vars_to_set: vec![(WEBSURFX_MAX_RESULTS_KEY, "invalid")],
                 checker: Box::new(|name, result| {
@@ -333,6 +367,19 @@ mod tests {
                 }),
             },
             TestCase {
+                name: "zero_max_results_returns_error",
+                vars_to_set: vec![(WEBSURFX_MAX_RESULTS_KEY, "0")],
+                checker: Box::new(|name, result| {
+                    assert!(result.is_err(), "Test case '{}' failed", name);
+                    assert_eq!(
+                        result.unwrap_err().user_message(),
+                        "Invalid environment variable: WEBSURFX_MAX_RESULTS must be greater than 0",
+                        "Test case '{}' failed",
+                        name
+                    );
+                }),
+            },
+            TestCase {
                 name: "invalid_validation_timeout_value",
                 vars_to_set: vec![(WEBSURFX_VALIDATION_TIMEOUT_SECONDS_KEY, "invalid")],
                 checker: Box::new(|name, result| {
@@ -347,6 +394,19 @@ mod tests {
                     assert_eq!(
                         result.unwrap().validation_timeout_seconds,
                         15,
+                        "Test case '{}' failed",
+                        name
+                    );
+                }),
+            },
+            TestCase {
+                name: "zero_validation_timeout_returns_error",
+                vars_to_set: vec![(WEBSURFX_VALIDATION_TIMEOUT_SECONDS_KEY, "0")],
+                checker: Box::new(|name, result| {
+                    assert!(result.is_err(), "Test case '{}' failed", name);
+                    assert_eq!(
+                        result.unwrap_err().user_message(),
+                        "Invalid environment variable: WEBSURFX_VALIDATION_TIMEOUT_SECONDS must be greater than 0",
                         "Test case '{}' failed",
                         name
                     );

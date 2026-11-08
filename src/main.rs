@@ -114,7 +114,7 @@ impl WebsurfxServer {
 impl ServerHandler for WebsurfxServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
-            protocol_version: ProtocolVersion::V_2024_11_05,
+            protocol_version: ProtocolVersion::LATEST,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation {
                 name: env!("CARGO_PKG_NAME").to_string(),
@@ -177,20 +177,7 @@ async fn serve_http() -> Result<()> {
         );
     }
 
-    let http_server = WebsurfxServer::from_config(config)?;
-    let mcp_service: StreamableHttpService<WebsurfxServer, LocalSessionManager> =
-        StreamableHttpService::new(
-            move || Ok(http_server.clone()),
-            Default::default(),
-            StreamableHttpServerConfig {
-                stateful_mode: false,
-                sse_keep_alive: None,
-            },
-        );
-
-    let app = Router::new()
-        .route("/healthz", get(healthz))
-        .nest_service("/mcp", mcp_service);
+    let app = http_app(WebsurfxServer::from_config(config)?);
 
     let bind_addr = std::env::var("MCP_HTTP_BIND").unwrap_or_else(|_| "0.0.0.0:8001".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr)
@@ -204,6 +191,22 @@ async fn serve_http() -> Result<()> {
 
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn http_app(server: WebsurfxServer) -> Router {
+    let mcp_service: StreamableHttpService<WebsurfxServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(server.clone()),
+            Default::default(),
+            StreamableHttpServerConfig {
+                stateful_mode: false,
+                sse_keep_alive: None,
+            },
+        );
+
+    Router::new()
+        .route("/healthz", get(healthz))
+        .nest_service("/mcp", mcp_service)
 }
 
 async fn healthz() -> &'static str {
@@ -273,7 +276,53 @@ mod tests {
     fn server_info_identifies_websurfx_mcp() {
         let info = WebsurfxServer::default().get_info();
 
+        assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
         assert_eq!(info.server_info.name, "websurfx-mcp");
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn http_transport_serves_health_and_initialize() {
+        let server = WebsurfxServer::from_config(Config::default()).unwrap();
+        let app = http_app(server);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+
+        let health = client
+            .get(format!("http://{addr}/healthz"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(health.status(), reqwest::StatusCode::OK);
+        assert_eq!(health.text().await.unwrap(), "ok");
+
+        let response = client
+            .post(format!("http://{addr}/mcp"))
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(
+                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#,
+            )
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body = response.text().await.unwrap();
+        let payload = body
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap_or(&body);
+        let json: serde_json::Value = serde_json::from_str(payload).unwrap();
+
+        assert_eq!(json["result"]["serverInfo"]["name"], "websurfx-mcp");
+        assert_eq!(json["result"]["protocolVersion"], "2025-03-26");
+
+        handle.abort();
     }
 }

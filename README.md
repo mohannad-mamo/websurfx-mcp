@@ -123,6 +123,21 @@ MCP (Streamable HTTP).
 The HTTP server still starts if Websurfx is temporarily unreachable; it logs a
 warning and `/healthz` remains available for readiness checks.
 
+## Security
+
+The HTTP transport does **not** provide authentication. Anyone who can reach
+`/mcp` can run searches through your Websurfx instance.
+
+- Bind to loopback (`MCP_HTTP_BIND=127.0.0.1:8001`) when the client runs on the
+  same machine.
+- If the server must be reachable over a network, put it behind a reverse proxy
+  that enforces authentication and TLS. Do not publish port `8001` directly to
+  the internet.
+- Docker's `-p 8001:8001` listens on all host interfaces by default.
+- Websurfx's own rate limits and safe-search settings still apply.
+
+Use stdio for local clients unless you specifically need the HTTP transport.
+
 ### Tool Parameters
 
 The `websurfx_search` tool accepts only the parameters Websurfx actually honors:
@@ -150,6 +165,10 @@ Websurfx can return no results because an upstream engine failed, a query was
 blocked by safe search, or no engines are enabled. Instead of reporting those
 as an ordinary empty result, the tool appends an `Engine warnings` list and/or
 a notice explaining the status returned by Websurfx.
+
+For example, a DuckDuckGo failure appears as `- duckduckgo: EmptyResultSet` or
+`- duckduckgo: RequestError`, rather than silently returning only results from
+other engines.
 
 ### Example Queries
 

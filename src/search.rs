@@ -11,6 +11,7 @@ const MAX_PAGE: u32 = 50;
 const MAX_SAFE_SEARCH_LEVEL: u8 = 4;
 const MAX_QUERY_LENGTH: usize = 512;
 const MAX_CONTENT_LENGTH: usize = 200;
+const MAX_ERROR_BODY_LENGTH: usize = 500;
 const MAX_HTTP_CLIENT_POOL_SIZE: usize = 3;
 const HTTP_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_HTTP_REQUEST_RETRY: u32 = 3;
@@ -40,6 +41,18 @@ where
 fn begin_notice(formatted: &mut String) {
     if !formatted.ends_with("\n\n") {
         formatted.push('\n');
+    }
+}
+
+/// Truncates on a UTF-8 character boundary. Slicing by bytes panics for
+/// multi-byte scripts like Arabic, Hebrew, CJK, etc.
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() > max_chars {
+        let mut truncated: String = value.chars().take(max_chars).collect();
+        truncated.push_str("...");
+        truncated
+    } else {
+        value.to_string()
     }
 }
 
@@ -191,7 +204,10 @@ impl WebsurfxClient {
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
-            let body = response.text().await.unwrap_or_default();
+            let body = truncate_chars(
+                &response.text().await.unwrap_or_default(),
+                MAX_ERROR_BODY_LENGTH,
+            );
             return Err(WebsurfxError::HttpStatusError { status, body });
         }
 
@@ -283,17 +299,7 @@ impl WebsurfxClient {
                 formatted.push_str(&format!("   URL: {}\n", result.url));
 
                 if !result.content.is_empty() {
-                    // Truncate on a UTF-8 character boundary. Slicing by bytes
-                    // (&result.content[..MAX_CONTENT_LENGTH]) panics for multi-byte
-                    // scripts like Arabic, Hebrew, CJK, etc.
-                    let content = if result.content.chars().count() > MAX_CONTENT_LENGTH {
-                        let mut truncated: String =
-                            result.content.chars().take(MAX_CONTENT_LENGTH).collect();
-                        truncated.push_str("...");
-                        truncated
-                    } else {
-                        result.content.clone()
-                    };
+                    let content = truncate_chars(&result.content, MAX_CONTENT_LENGTH);
                     formatted.push_str(&format!("   {}\n", content));
                 }
 
@@ -581,6 +587,13 @@ mod tests {
                 ..Config::default()
             },
         );
+    }
+
+    #[test]
+    fn test_truncate_chars_respects_character_boundaries() {
+        assert_eq!(truncate_chars("short", 10), "short");
+        assert_eq!(truncate_chars("مرحبا بالعالم", 5), "مرحبا...");
+        assert_eq!(truncate_chars("αβγδεζ", 3), "αβγ...");
     }
 
     #[tokio::test]
