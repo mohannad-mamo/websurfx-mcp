@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const USER_AGENT: &str = "searxng-mcp/0.1";
-const DEFAULT_FORMAT: &str = "json";
+const DEFAULT_FORMAT: &str = "true";
 const VALID_TIME_RANGES: &[&str] = &["day", "month", "year"];
 const MAX_SAFE_SEARCH_LEVEL: u8 = 2;
 const MAX_CONTENT_LENGTH: usize = 200;
@@ -13,11 +13,32 @@ const MAX_HTTP_CLIENT_POOL_SIZE: usize = 3;
 const HTTP_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_HTTP_REQUEST_RETRY: u32 = 3;
 
+/// Accepts either a JSON string or an array of strings, and always returns
+/// a joined string. Needed because Websurfx returns `engines`/`categories`
+/// as arrays, while SearXNG-style clients expect a single string.
+fn string_or_vec<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum S {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Option::<S>::deserialize(d)? {
+        Some(S::One(s)) => s,
+        Some(S::Many(v)) => v.join(", "),
+        None => String::new(),
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchParams {
     pub q: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub format: Option<String>,
+    pub json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub categories: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,7 +57,7 @@ impl SearchParams {
     pub fn new(query: String) -> Self {
         Self {
             q: query,
-            format: Some(DEFAULT_FORMAT.to_string()),
+            json: Some(DEFAULT_FORMAT.to_string()),
             categories: None,
             engines: None,
             language: None,
@@ -108,21 +129,24 @@ impl SearchParams {
 pub struct SearchResult {
     pub title: String,
     pub url: String,
-    #[serde(default)]
+    #[serde(default, alias = "description")]
     pub content: String,
-    #[serde(default)]
+    #[serde(default, alias = "engines", deserialize_with = "string_or_vec")]
     pub engine: String,
-    #[serde(default)]
+    #[serde(default, alias = "categories", deserialize_with = "string_or_vec")]
     pub category: String,
-    #[serde(default)]
+    #[serde(default, alias = "relevanceScore")]
     pub score: f64,
 }
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub struct SearchResponse {
+    #[serde(default)]
     pub query: String,
-    pub number_of_results: u64, // This property seems to always be 0, so ignore it and get the true result count from results.len()
+    #[serde(default)]
+    pub number_of_results: u64,
+    #[serde(default)]
     pub results: Vec<SearchResult>,
     #[serde(default)]
     pub engines: Vec<EngineInfo>,
@@ -132,9 +156,10 @@ pub struct SearchResponse {
     pub search: SearchInfo,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
 pub struct EngineInfo {
+    #[serde(default)]
     pub name: String,
     #[serde(default)]
     pub count: u32,
@@ -175,7 +200,7 @@ impl SearxngClient {
         params.validate()?;
 
         // Ensure format is always set to json for API responses
-        params.format = Some(DEFAULT_FORMAT.to_string());
+        params.json = Some(DEFAULT_FORMAT.to_string());
 
         let response = self
             .client
@@ -193,8 +218,13 @@ impl SearxngClient {
             )));
         }
 
-        let search_response: SearchResponse =
+        let mut search_response: SearchResponse =
             response.json().await.map_err(SearxngError::HttpError)?;
+
+        // Websurfx does not echo the query; fill it in from the request
+        if search_response.query.is_empty() {
+            search_response.query = params.q.clone();
+        }
 
         Ok(search_response)
     }
@@ -265,8 +295,17 @@ impl SearxngClient {
             formatted.push_str(&format!("   URL: {}\n", result.url));
 
             if !result.content.is_empty() {
-                let content = if result.content.len() > MAX_CONTENT_LENGTH {
-                    format!("{}...", &result.content[..MAX_CONTENT_LENGTH])
+                // Truncate on a UTF-8 character boundary. Slicing by bytes
+                // (&result.content[..MAX_CONTENT_LENGTH]) panics for multi-byte
+                // scripts like Arabic, Hebrew, CJK, etc.
+                let content = if result.content.chars().count() > MAX_CONTENT_LENGTH {
+                    let mut truncated: String = result
+                        .content
+                        .chars()
+                        .take(MAX_CONTENT_LENGTH)
+                        .collect();
+                    truncated.push_str("...");
+                    truncated
                 } else {
                     result.content.clone()
                 };
@@ -351,14 +390,14 @@ mod tests {
             .with_language("en".to_string())
             .with_page(2);
 
-        let mut params_with_format = params.clone();
-        params_with_format.format = Some("json".to_string());
+        let mut params_with_json = params.clone();
+        params_with_json.json = Some("true".to_string());
 
-        let serialized = serde_json::to_string(&params_with_format).unwrap();
+        let serialized = serde_json::to_string(&params_with_json).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
 
         assert!(parsed.get("q").is_some());
-        assert!(parsed.get("format").is_some());
+        assert!(parsed.get("json").is_some());
         assert!(parsed.get("categories").is_some());
         assert!(parsed.get("language").is_some());
         assert!(parsed.get("pageno").is_some());
@@ -368,15 +407,12 @@ mod tests {
         assert!(parsed.get("safesearch").is_none());
 
         let minimal_params = SearchParams::new("minimal".to_string());
-        let mut minimal_with_format = minimal_params;
-        minimal_with_format.format = Some("json".to_string());
-
-        let minimal_serialized = serde_json::to_string(&minimal_with_format).unwrap();
+        let minimal_serialized = serde_json::to_string(&minimal_params).unwrap();
         let minimal_parsed: serde_json::Value = serde_json::from_str(&minimal_serialized).unwrap();
 
         assert_eq!(minimal_parsed.as_object().unwrap().len(), 2);
         assert!(minimal_parsed.get("q").is_some());
-        assert!(minimal_parsed.get("format").is_some());
+        assert!(minimal_parsed.get("json").is_some());
     }
 
     #[tokio::test]
