@@ -28,7 +28,23 @@ cargo install --path .
 
 ## Docker
 
-Build locally:
+Prebuilt multi-arch images (`linux/amd64`, `linux/arm64`) are published to
+GHCR:
+
+| Tag | Meaning |
+| --- | --- |
+| `edge` | Latest build from `main` |
+| `sha-<shortsha>` | Exact commit |
+| `0.2.0`, `0.2`, `latest` | Release tags |
+
+```bash
+docker pull ghcr.io/mohannad-mamo/websurfx-mcp:edge
+```
+
+Use `:edge` for the latest development build or a release tag for a stable
+version.
+
+### Build locally
 
 ```bash
 docker build -t websurfx-mcp .
@@ -51,18 +67,22 @@ The runtime image is Alpine-based, runs as a non-root user, and includes
 ### stdio
 
 ```bash
+IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:edge
+
 docker run --rm -i \
   -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
-  websurfx-mcp
+  "$IMAGE"
 ```
 
 ### HTTP
 
 ```bash
+IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:edge
+
 docker run --rm -p 8001:8001 \
   -e MCP_TRANSPORT=http \
   -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
-  websurfx-mcp
+  "$IMAGE"
 ```
 
 Verify it is up with `curl http://localhost:8001/healthz`.
