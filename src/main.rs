@@ -23,12 +23,13 @@ use search::{SearchParams, WebsurfxClient};
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct SearchRequest {
+    /// The search query (max 512 characters).
     pub query: String,
-    pub categories: Option<String>,
-    pub engines: Option<String>,
-    pub language: Option<String>,
+    /// Page number, 1-based. Websurfx supports pages 1-50.
+    #[schemars(range(min = 1, max = 50))]
     pub page: Option<u32>,
-    pub time_range: Option<String>,
+    /// Safe search level: 0 (off) to 4 (strictest).
+    #[schemars(range(min = 0, max = 4))]
     pub safe_search: Option<u8>,
 }
 
@@ -56,7 +57,7 @@ impl WebsurfxServer {
     }
 
     #[tool(
-        description = "Search the web using Websurfx. Provides comprehensive search results from multiple search engines."
+        description = "Search the web using Websurfx. Returns results from the configured Websurfx instance."
     )]
     async fn websurfx_search(
         &self,
@@ -71,40 +72,12 @@ impl WebsurfxServer {
 
         let mut search_params = SearchParams::new(request.query);
 
-        if let Some(categories) = request.categories {
-            if !categories.trim().is_empty() {
-                search_params = search_params.with_categories(categories);
-            }
-        }
-
-        if let Some(engines) = request.engines {
-            if !engines.trim().is_empty() {
-                search_params = search_params.with_engines(engines);
-            }
-        }
-
-        if let Some(language) = request.language {
-            if !language.trim().is_empty() {
-                search_params = search_params.with_language(language);
-            }
-        }
-
         if let Some(page) = request.page {
-            if page > 0 {
-                search_params = search_params.with_page(page);
-            }
-        }
-
-        if let Some(time_range) = request.time_range {
-            if !time_range.trim().is_empty() {
-                search_params = search_params.with_time_range(time_range);
-            }
+            search_params = search_params.with_page(page);
         }
 
         if let Some(safe_search) = request.safe_search {
-            if safe_search <= 2 {
-                search_params = search_params.with_safe_search(safe_search);
-            }
+            search_params = search_params.with_safe_search(safe_search);
         }
 
         match self.client.search(search_params).await {
@@ -132,7 +105,7 @@ impl ServerHandler for WebsurfxServer {
             protocol_version: ProtocolVersion::V_2024_11_05,
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
-            instructions: Some("Use the websurfx_search tool to search the web. Provide a query and optionally specify categories, engines, language, page number, time range, and safe search level.".into()),
+            instructions: Some("Use the websurfx_search tool to search the web. Provide a query and optionally a page number (1-50) and safe search level (0-4).".into()),
         }
     }
 }
@@ -164,4 +137,32 @@ async fn main() -> Result<()> {
     service.waiting().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_request_schema_only_advertises_supported_parameters() {
+        let schema = schemars::schema_for!(SearchRequest);
+        let value = serde_json::to_value(&schema).unwrap();
+        let properties = value
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("schema should have properties");
+
+        let mut keys: Vec<&str> = properties.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["page", "query", "safe_search"]);
+
+        let page = &properties["page"];
+        assert_eq!(page.get("minimum").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(page.get("maximum").and_then(|v| v.as_u64()), Some(50));
+
+        let safe_search = &properties["safe_search"];
+        assert_eq!(safe_search.get("minimum").and_then(|v| v.as_u64()), Some(0));
+        let safe_search_max = safe_search.get("maximum").and_then(|v| v.as_u64());
+        assert_eq!(safe_search_max, Some(4));
+    }
 }

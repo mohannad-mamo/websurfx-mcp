@@ -63,23 +63,28 @@ Optional environment variables:
 
 ### Tool Parameters
 
-The `websurfx_search` tool accepts the following parameters:
+The `websurfx_search` tool accepts only the parameters Websurfx actually honors:
 
-- `query` (required): The search query string
-- `categories` (optional): Comma-separated list of categories (e.g., "general,news,images")
-- `engines` (optional): Comma-separated list of specific engines to use
-- `language` (optional): Language code for results (e.g., "en", "fr", "de")
-- `page` (optional): Page number for pagination (starts at 1)
-- `time_range` (optional): Time filter - "day", "month", or "year"
+- `query` (required): The search query string (max 512 characters)
+- `page` (optional): Page number, 1-based (1-50)
 - `safe_search` (optional): Safe search level - 0 (none) through 4 (strictest)
+
+#### Unsupported by Websurfx
+
+Websurfx v1.31.1 silently ignores `categories`, `engines`, `language`, and
+`time_range`, as well as the SearXNG-style `format`, `pageno`, and `safesearch`
+parameter names. This server therefore does not advertise them. Configure
+engines, categories, and language on the Websurfx server itself.
+
+The server sends only `q`, `json=true`, `page`, and `safesearch`.
 
 ### Example Queries
 
 Ask Zed:
 
 - "Search for 'rust programming language'"
-- "Search for recent news about climate change in the past month"
-- "Search for 'machine learning' in academic sources"
+- "Find recent news about climate change"
+- "Search for 'machine learning' tutorials"
 
 ## Development
 

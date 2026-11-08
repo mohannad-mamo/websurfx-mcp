@@ -6,8 +6,9 @@ use std::time::Duration;
 
 const USER_AGENT: &str = "websurfx-mcp/0.2";
 const DEFAULT_FORMAT: &str = "true";
-const VALID_TIME_RANGES: &[&str] = &["day", "month", "year"];
-const MAX_SAFE_SEARCH_LEVEL: u8 = 2;
+const MIN_PAGE: u32 = 1;
+const MAX_PAGE: u32 = 50;
+const MAX_SAFE_SEARCH_LEVEL: u8 = 4;
 const MAX_CONTENT_LENGTH: usize = 200;
 const MAX_HTTP_CLIENT_POOL_SIZE: usize = 3;
 const HTTP_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -40,15 +41,7 @@ pub struct SearchParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub json: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub categories: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub engines: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub language: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pageno: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_range: Option<String>,
+    pub page: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub safesearch: Option<u8>,
 }
@@ -58,37 +51,13 @@ impl SearchParams {
         Self {
             q: query,
             json: Some(DEFAULT_FORMAT.to_string()),
-            categories: None,
-            engines: None,
-            language: None,
-            pageno: None,
-            time_range: None,
+            page: None,
             safesearch: None,
         }
     }
 
-    pub fn with_categories(mut self, categories: String) -> Self {
-        self.categories = Some(categories);
-        self
-    }
-
-    pub fn with_engines(mut self, engines: String) -> Self {
-        self.engines = Some(engines);
-        self
-    }
-
-    pub fn with_language(mut self, language: String) -> Self {
-        self.language = Some(language);
-        self
-    }
-
     pub fn with_page(mut self, page: u32) -> Self {
-        self.pageno = Some(page);
-        self
-    }
-
-    pub fn with_time_range(mut self, time_range: String) -> Self {
-        self.time_range = Some(time_range);
+        self.page = Some(page);
         self
     }
 
@@ -104,19 +73,21 @@ impl SearchParams {
             ));
         }
 
-        if let Some(ref time_range) = self.time_range {
-            if !VALID_TIME_RANGES.contains(&time_range.as_str()) {
-                return Err(WebsurfxError::InvalidParameters(
-                    "Time range must be 'day', 'month', or 'year'".to_string(),
-                ));
+        if let Some(page) = self.page {
+            if !(MIN_PAGE..=MAX_PAGE).contains(&page) {
+                return Err(WebsurfxError::InvalidParameters(format!(
+                    "Page must be between {} and {}",
+                    MIN_PAGE, MAX_PAGE
+                )));
             }
         }
 
         if let Some(safesearch) = self.safesearch {
             if safesearch > MAX_SAFE_SEARCH_LEVEL {
-                return Err(WebsurfxError::InvalidParameters(
-                    "Safe search level must be 0, 1, or 2".to_string(),
-                ));
+                return Err(WebsurfxError::InvalidParameters(format!(
+                    "Safe search level must be between 0 and {}",
+                    MAX_SAFE_SEARCH_LEVEL
+                )));
             }
         }
 
@@ -199,7 +170,8 @@ impl WebsurfxClient {
     pub async fn search(&self, mut params: SearchParams) -> WebsurfxResult<SearchResponse> {
         params.validate()?;
 
-        // Ensure format is always set to json for API responses
+        // Websurfx only returns JSON when json=true is set. Using
+        // format=json returns HTML instead.
         params.json = Some(DEFAULT_FORMAT.to_string());
 
         let response = self
@@ -348,33 +320,29 @@ mod tests {
     #[test]
     fn test_search_params_builder() {
         let params = SearchParams::new("test query".to_string())
-            .with_categories("general,news".to_string())
-            .with_language("en".to_string())
             .with_page(2)
-            .with_time_range("month".to_string())
             .with_safe_search(1);
 
         assert_eq!(params.q, "test query");
-        assert_eq!(params.categories, Some("general,news".to_string()));
-        assert_eq!(params.language, Some("en".to_string()));
-        assert_eq!(params.pageno, Some(2));
-        assert_eq!(params.time_range, Some("month".to_string()));
+        assert_eq!(params.page, Some(2));
         assert_eq!(params.safesearch, Some(1));
     }
 
     #[test]
     fn test_search_params_validation() {
         let valid_params = SearchParams::new("test query".to_string())
-            .with_safe_search(1)
-            .with_time_range("day".to_string());
+            .with_page(50)
+            .with_safe_search(4);
         assert!(valid_params.validate().is_ok());
 
-        let invalid_safe_search = SearchParams::new("test query".to_string()).with_safe_search(5); // Invalid: > 2
+        let invalid_safe_search = SearchParams::new("test query".to_string()).with_safe_search(5);
         assert!(invalid_safe_search.validate().is_err());
 
-        let invalid_time_range =
-            SearchParams::new("test query".to_string()).with_time_range("invalid".to_string());
-        assert!(invalid_time_range.validate().is_err());
+        let page_too_low = SearchParams::new("test query".to_string()).with_page(0);
+        assert!(page_too_low.validate().is_err());
+
+        let page_too_high = SearchParams::new("test query".to_string()).with_page(51);
+        assert!(page_too_high.validate().is_err());
 
         let empty_query = SearchParams::new("   ".to_string());
         assert!(empty_query.validate().is_err());
@@ -383,25 +351,22 @@ mod tests {
     #[test]
     fn test_search_params_serialization() {
         let params = SearchParams::new("test query".to_string())
-            .with_categories("general,news".to_string())
-            .with_language("en".to_string())
-            .with_page(2);
+            .with_page(2)
+            .with_safe_search(1);
 
-        let mut params_with_json = params.clone();
-        params_with_json.json = Some("true".to_string());
-
-        let serialized = serde_json::to_string(&params_with_json).unwrap();
+        let serialized = serde_json::to_string(&params).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
 
-        assert!(parsed.get("q").is_some());
-        assert!(parsed.get("json").is_some());
-        assert!(parsed.get("categories").is_some());
-        assert!(parsed.get("language").is_some());
-        assert!(parsed.get("pageno").is_some());
+        assert_eq!(parsed.get("q").unwrap(), "test query");
+        assert_eq!(parsed.get("json").unwrap(), "true");
+        assert_eq!(parsed.get("page").unwrap(), 2);
+        assert_eq!(parsed.get("safesearch").unwrap(), 1);
 
+        assert!(parsed.get("pageno").is_none());
+        assert!(parsed.get("categories").is_none());
         assert!(parsed.get("engines").is_none());
+        assert!(parsed.get("language").is_none());
         assert!(parsed.get("time_range").is_none());
-        assert!(parsed.get("safesearch").is_none());
 
         let minimal_params = SearchParams::new("minimal".to_string());
         let minimal_serialized = serde_json::to_string(&minimal_params).unwrap();
@@ -440,8 +405,7 @@ mod tests {
         let config = Config::from_env().expect("Failed to load config");
         let client = WebsurfxClient::new(config).expect("Failed to create client");
 
-        let params = SearchParams::new("rust programming language".to_string())
-            .with_language("en".to_string());
+        let params = SearchParams::new("rust programming language".to_string()).with_page(1);
 
         let result = client.search(params).await;
 
