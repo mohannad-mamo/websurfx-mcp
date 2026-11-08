@@ -1,0 +1,10 @@
+Search Results for: "rust"
+Found 1 result
+
+1. Rust
+   URL: https://www.rust-lang.org/
+   A language empowering everyone.
+   Source: wikipedia-en
+
+Engine warnings:
+- duckduckgo: EmptyResultSet

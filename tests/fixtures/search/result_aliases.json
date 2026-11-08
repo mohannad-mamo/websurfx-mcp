@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "title": "Rust",
+      "url": "https://www.rust-lang.org/",
+      "description": "A language empowering everyone.",
+      "engine": ["wikipedia-en", "duckduckgo"],
+      "relevanceScore": 0.75
+    }
+  ],
+  "engine_errors_info": null,
+  "disallowed": false,
+  "filtered": false,
+  "safe_search_level": 0,
+  "no_engines_selected": false
+}

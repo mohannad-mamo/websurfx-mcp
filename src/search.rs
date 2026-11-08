@@ -36,6 +36,13 @@ where
     })
 }
 
+/// Ensures a section is separated by exactly one blank line.
+fn begin_notice(formatted: &mut String) {
+    if !formatted.ends_with("\n\n") {
+        formatted.push('\n');
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchParams {
     pub q: String,
@@ -310,23 +317,27 @@ impl WebsurfxClient {
         engine_errors: &[EngineErrorInfo],
     ) {
         if response.disallowed {
+            begin_notice(formatted);
             formatted.push_str(&format!(
-                "\nWebsurfx disallowed this query at safe search level {} (server-side blocklist).\n",
+                "Websurfx disallowed this query at safe search level {} (server-side blocklist).\n",
                 response.safe_search_level
             ));
         }
 
         if response.filtered {
+            begin_notice(formatted);
             formatted
-                .push_str("\nWebsurfx reported the results as filtered (server-side filtering).\n");
+                .push_str("Websurfx reported the results as filtered (server-side filtering).\n");
         }
 
         if response.no_engines_selected {
-            formatted.push_str("\nWebsurfx has no search engines selected/enabled.\n");
+            begin_notice(formatted);
+            formatted.push_str("Websurfx has no search engines selected/enabled.\n");
         }
 
         if !engine_errors.is_empty() {
-            formatted.push_str("\nEngine warnings:\n");
+            begin_notice(formatted);
+            formatted.push_str("Engine warnings:\n");
             for info in engine_errors {
                 let engine = if info.engine.is_empty() {
                     "unknown engine"
@@ -352,6 +363,42 @@ impl WebsurfxClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EMPTY_ENGINE_ERROR_JSON: &str =
+        include_str!("../tests/fixtures/search/empty_engine_error.json");
+    const EMPTY_ENGINE_ERROR_EXPECTED: &str =
+        include_str!("../tests/fixtures/search/empty_engine_error.expected.txt");
+    const CAMEL_CASE_NULL_ERRORS_JSON: &str =
+        include_str!("../tests/fixtures/search/camel_case_null_errors.json");
+    const RESULT_ALIASES_JSON: &str = include_str!("../tests/fixtures/search/result_aliases.json");
+    const DISALLOWED_JSON: &str = include_str!("../tests/fixtures/search/disallowed.json");
+    const DISALLOWED_EXPECTED: &str =
+        include_str!("../tests/fixtures/search/disallowed.expected.txt");
+    const FILTERED_NO_ENGINES_JSON: &str =
+        include_str!("../tests/fixtures/search/filtered_no_engines.json");
+    const FILTERED_NO_ENGINES_EXPECTED: &str =
+        include_str!("../tests/fixtures/search/filtered_no_engines.expected.txt");
+    const RESULTS_WITH_ENGINE_WARNING_JSON: &str =
+        include_str!("../tests/fixtures/search/results_with_engine_warning.json");
+    const RESULTS_WITH_ENGINE_WARNING_EXPECTED: &str =
+        include_str!("../tests/fixtures/search/results_with_engine_warning.expected.txt");
+    const TRUNCATED_RESULTS_JSON: &str =
+        include_str!("../tests/fixtures/search/truncated_results.json");
+    const TRUNCATED_RESULTS_EXPECTED: &str =
+        include_str!("../tests/fixtures/search/truncated_results.expected.txt");
+
+    fn parse_fixture(json: &str, query: &str) -> SearchResponse {
+        let mut response: SearchResponse = serde_json::from_str(json).unwrap();
+        // Websurfx does not echo the query, so the client fills it in.
+        response.query = query.to_string();
+        response
+    }
+
+    fn format_fixture(json: &str, expected: &str, query: &str, config: Config) {
+        let client = WebsurfxClient::new(config).unwrap();
+        let response = parse_fixture(json, query);
+        assert_eq!(client.format_results(&response), expected);
+    }
 
     #[test]
     fn test_search_params_builder() {
@@ -458,20 +505,9 @@ mod tests {
 
     #[test]
     fn test_parse_websurfx_payload_with_snake_case_fields() {
-        let json = r#"{
-            "results": [],
-            "engine_errors_info": [
-                {"error": "EmptyResultSet", "engine": "duckduckgo", "severity_color": "blue"}
-            ],
-            "disallowed": false,
-            "filtered": false,
-            "safe_search_level": 4,
-            "no_engines_selected": false
-        }"#;
+        let response: SearchResponse = serde_json::from_str(EMPTY_ENGINE_ERROR_JSON).unwrap();
 
-        let response: SearchResponse = serde_json::from_str(json).unwrap();
-
-        assert_eq!(response.safe_search_level, 4);
+        assert_eq!(response.safe_search_level, 0);
         let errors = response.engine_errors_info.as_deref().unwrap();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].engine, "duckduckgo");
@@ -480,16 +516,7 @@ mod tests {
 
     #[test]
     fn test_parse_websurfx_payload_with_camel_case_fields_and_null_errors() {
-        let json = r#"{
-            "results": [],
-            "engineErrorsInfo": null,
-            "disallowed": false,
-            "filtered": true,
-            "safeSearchLevel": 3,
-            "noEnginesSelected": true
-        }"#;
-
-        let response: SearchResponse = serde_json::from_str(json).unwrap();
+        let response: SearchResponse = serde_json::from_str(CAMEL_CASE_NULL_ERRORS_JSON).unwrap();
 
         assert!(response.engine_errors_info.is_none());
         assert!(response.filtered);
@@ -499,15 +526,8 @@ mod tests {
 
     #[test]
     fn test_parse_search_result_aliases() {
-        let json = r#"{
-            "title": "Rust",
-            "url": "https://www.rust-lang.org/",
-            "description": "A language empowering everyone.",
-            "engines": ["wikipedia-en", "duckduckgo"],
-            "relevanceScore": 0.75
-        }"#;
-
-        let result: SearchResult = serde_json::from_str(json).unwrap();
+        let response: SearchResponse = serde_json::from_str(RESULT_ALIASES_JSON).unwrap();
+        let result = &response.results[0];
 
         assert_eq!(result.content, "A language empowering everyone.");
         assert_eq!(result.engine, "wikipedia-en, duckduckgo");
@@ -516,114 +536,51 @@ mod tests {
 
     #[test]
     fn test_format_surfaces_engine_errors_instead_of_silent_empty() {
-        let client = WebsurfxClient::new(Config::default()).unwrap();
-        let response = SearchResponse {
-            query: "rust".to_string(),
-            engine_errors_info: Some(vec![EngineErrorInfo {
-                engine: "duckduckgo".to_string(),
-                error: "EmptyResultSet".to_string(),
-            }]),
-            ..Default::default()
-        };
-
-        let formatted = client.format_results(&response);
-
-        assert!(formatted.contains("No results found for: \"rust\""));
-        assert!(formatted.contains("Engine warnings:"));
-        assert!(formatted.contains("- duckduckgo: EmptyResultSet"));
+        format_fixture(
+            EMPTY_ENGINE_ERROR_JSON,
+            EMPTY_ENGINE_ERROR_EXPECTED,
+            "rust",
+            Config::default(),
+        );
     }
 
     #[test]
     fn test_format_surfaces_status_flags() {
-        let client = WebsurfxClient::new(Config::default()).unwrap();
-
-        let disallowed = SearchResponse {
-            query: "blocked".to_string(),
-            disallowed: true,
-            safe_search_level: 4,
-            ..Default::default()
-        };
-        let formatted = client.format_results(&disallowed);
-        assert!(formatted.contains("disallowed"));
-        assert!(formatted.contains("safe search level 4"));
-
-        let filtered = SearchResponse {
-            query: "filtered".to_string(),
-            filtered: true,
-            ..Default::default()
-        };
-        assert!(client.format_results(&filtered).contains("filtered"));
-
-        let no_engines = SearchResponse {
-            query: "none".to_string(),
-            no_engines_selected: true,
-            ..Default::default()
-        };
-        assert!(client
-            .format_results(&no_engines)
-            .contains("no search engines selected"));
+        format_fixture(
+            DISALLOWED_JSON,
+            DISALLOWED_EXPECTED,
+            "blocked query",
+            Config::default(),
+        );
+        format_fixture(
+            FILTERED_NO_ENGINES_JSON,
+            FILTERED_NO_ENGINES_EXPECTED,
+            "filtered",
+            Config::default(),
+        );
     }
 
     #[test]
     fn test_format_keeps_results_and_adds_engine_warnings() {
-        let client = WebsurfxClient::new(Config::default()).unwrap();
-        let response = SearchResponse {
-            query: "rust".to_string(),
-            results: vec![SearchResult {
-                title: "Rust".to_string(),
-                url: "https://www.rust-lang.org/".to_string(),
-                content: "A language empowering everyone.".to_string(),
-                engine: "wikipedia-en".to_string(),
-                score: 0.0,
-            }],
-            engine_errors_info: Some(vec![EngineErrorInfo {
-                engine: "duckduckgo".to_string(),
-                error: "EmptyResultSet".to_string(),
-            }]),
-            ..Default::default()
-        };
-
-        let formatted = client.format_results(&response);
-
-        assert!(formatted.contains("1. Rust"));
-        assert!(formatted.contains("Source: wikipedia-en"));
-        assert!(formatted.contains("Engine warnings:"));
-        assert!(formatted.contains("- duckduckgo: EmptyResultSet"));
+        format_fixture(
+            RESULTS_WITH_ENGINE_WARNING_JSON,
+            RESULTS_WITH_ENGINE_WARNING_EXPECTED,
+            "rust",
+            Config::default(),
+        );
     }
 
     #[test]
     fn test_format_reports_when_results_are_truncated() {
-        let client = WebsurfxClient::new(Config {
-            max_results: 1,
-            ..Config::default()
-        })
-        .unwrap();
-        let response = SearchResponse {
-            query: "rust".to_string(),
-            results: vec![
-                SearchResult {
-                    title: "First".to_string(),
-                    url: "https://a.example".to_string(),
-                    content: String::new(),
-                    engine: String::new(),
-                    score: 0.0,
-                },
-                SearchResult {
-                    title: "Second".to_string(),
-                    url: "https://b.example".to_string(),
-                    content: String::new(),
-                    engine: String::new(),
-                    score: 0.0,
-                },
-            ],
-            ..Default::default()
-        };
-
-        let formatted = client.format_results(&response);
-
-        assert!(formatted.contains("Found 2 results (showing the first 1)"));
-        assert!(formatted.contains("1. First"));
-        assert!(!formatted.contains("2. Second"));
+        format_fixture(
+            TRUNCATED_RESULTS_JSON,
+            TRUNCATED_RESULTS_EXPECTED,
+            "rust",
+            Config {
+                max_results: 1,
+                ..Config::default()
+            },
+        );
     }
 
     #[tokio::test]

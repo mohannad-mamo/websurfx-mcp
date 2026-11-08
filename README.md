@@ -134,6 +134,9 @@ WEBSURFX_LIVE=1 cargo test test_search_integration
 
 Set `WEBSURFX_BASE_URL` alongside `WEBSURFX_LIVE=1` to test a different instance.
 
+The default suite is offline: JSON payloads and expected output live under
+`tests/fixtures/search/` and are compiled into the tests with `include_str!`.
+
 ### Project Structure
 
 ```

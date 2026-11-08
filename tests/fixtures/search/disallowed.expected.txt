@@ -1,0 +1,3 @@
+No results found for: "blocked query"
+
+Websurfx disallowed this query at safe search level 4 (server-side blocklist).

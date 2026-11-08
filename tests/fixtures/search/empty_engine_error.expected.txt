@@ -1,0 +1,4 @@
+No results found for: "rust"
+
+Engine warnings:
+- duckduckgo: EmptyResultSet

@@ -1,0 +1,14 @@
+{
+  "results": [],
+  "engine_errors_info": [
+    {
+      "error": "EmptyResultSet",
+      "engine": "duckduckgo",
+      "severity_color": "blue"
+    }
+  ],
+  "disallowed": false,
+  "filtered": false,
+  "safe_search_level": 0,
+  "no_engines_selected": false
+}

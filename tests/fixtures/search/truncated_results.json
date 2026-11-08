@@ -1,0 +1,23 @@
+{
+  "results": [
+    {
+      "title": "First",
+      "url": "https://a.example",
+      "description": "First result.",
+      "engine": ["wikipedia-en"],
+      "relevanceScore": 0.5
+    },
+    {
+      "title": "Second",
+      "url": "https://b.example",
+      "description": "Second result.",
+      "engine": ["duckduckgo"],
+      "relevanceScore": 0.4
+    }
+  ],
+  "engine_errors_info": null,
+  "disallowed": false,
+  "filtered": false,
+  "safe_search_level": 0,
+  "no_engines_selected": false
+}
