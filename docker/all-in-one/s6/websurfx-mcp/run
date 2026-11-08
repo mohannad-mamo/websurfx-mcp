@@ -1,0 +1,6 @@
+#!/command/with-contenv sh
+export HOME=/home/websurfx
+export MCP_TRANSPORT="${MCP_TRANSPORT:-http}"
+export MCP_HTTP_BIND="${MCP_HTTP_BIND:-0.0.0.0:8001}"
+export WEBSURFX_BASE_URL="${WEBSURFX_BASE_URL:-http://127.0.0.1:8080}"
+exec /command/s6-setuidgid websurfx /usr/local/bin/websurfx-mcp

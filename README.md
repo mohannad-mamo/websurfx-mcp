@@ -81,6 +81,7 @@ IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:edge
 
 docker run --rm -p 8001:8001 \
   -e MCP_TRANSPORT=http \
+  -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
   -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
   "$IMAGE"
 ```
@@ -89,6 +90,31 @@ Verify it is up with `curl http://localhost:8001/healthz`.
 
 On Linux, add `--add-host=host.docker.internal:host-gateway` to reach a
 Websurfx instance running directly on the host.
+
+### All-in-one image (experimental)
+
+The repository also contains an all-in-one image that bundles Websurfx
+`v1.31.1` with the MCP server. It is not published yet; build it locally:
+
+```bash
+docker build -f docker/all-in-one/Dockerfile -t websurfx-all-in-one .
+```
+
+```bash
+docker run --rm -p 8080:8080 -p 8001:8001 \
+  -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
+  websurfx-all-in-one
+```
+
+- Web UI: `http://localhost:8080`
+- MCP: `http://localhost:8001/mcp`
+- Health: `http://localhost:8001/healthz`
+
+The combined image contains MIT-licensed `websurfx-mcp` and AGPL-3.0-licensed
+Websurfx. The exact Websurfx source tarball and AGPL license are included at
+`/usr/share/src/websurfx-source.tar.gz` and
+`/usr/share/licenses/websurfx/LICENSE-AGPL-3.0`; see
+`/usr/share/licenses/THIRD_PARTY.txt`.
 
 ## Configuration
 
@@ -100,6 +126,7 @@ Optional environment variables:
 - `WEBSURFX_VALIDATION_TIMEOUT_SECONDS`: Validation timeout in seconds (default: 10)
 - `MCP_TRANSPORT`: `stdio` (default) or `http`
 - `MCP_HTTP_BIND`: Bind address used when `MCP_TRANSPORT=http` (default: `0.0.0.0:8001`)
+- `MCP_AUTH_TOKEN`: Optional bearer token required on `/mcp` when set
 
 ## Usage
 
@@ -147,14 +174,22 @@ warning and `/healthz` remains available for readiness checks.
 
 ## Security
 
-The HTTP transport does **not** provide authentication. Anyone who can reach
-`/mcp` can run searches through your Websurfx instance.
+The HTTP transport is **unauthenticated by default**. Set `MCP_AUTH_TOKEN` to
+require `Authorization: Bearer <token>` on `/mcp`; `/healthz` remains public for
+readiness checks.
 
+Generate a token with:
+
+```bash
+openssl rand -hex 32
+```
+
+- Without `MCP_AUTH_TOKEN`, anyone who can reach `/mcp` can run searches through
+  your Websurfx instance.
 - Bind to loopback (`MCP_HTTP_BIND=127.0.0.1:8001`) when the client runs on the
   same machine.
-- If the server must be reachable over a network, put it behind a reverse proxy
-  that enforces authentication and TLS. Do not publish port `8001` directly to
-  the internet.
+- If the server must be reachable over a network, use TLS and preferably a
+  reverse proxy. Bearer tokens sent over plain HTTP are visible on the network.
 - Docker's `-p 8001:8001` listens on all host interfaces by default.
 - Websurfx's own rate limits and safe-search settings still apply.
 

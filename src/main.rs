@@ -1,5 +1,12 @@
 use anyhow::{bail, Context, Result};
-use axum::{routing::get, Router};
+use axum::{
+    extract::{Request, State},
+    http::{header::AUTHORIZATION, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use rmcp::{
     handler::server::tool::ToolRouter,
     handler::server::wrapper::Parameters,
@@ -16,6 +23,7 @@ use rmcp::{
     ErrorData, ServerHandler,
 };
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 mod config;
 mod errors;
@@ -177,7 +185,15 @@ async fn serve_http() -> Result<()> {
         );
     }
 
-    let app = http_app(WebsurfxServer::from_config(config)?);
+    let auth_token = std::env::var("MCP_AUTH_TOKEN")
+        .ok()
+        .filter(|value| !value.is_empty());
+
+    if auth_token.is_none() {
+        eprintln!("Warning: MCP_AUTH_TOKEN is not set; /mcp is unauthenticated");
+    }
+
+    let app = http_app(WebsurfxServer::from_config(config)?, auth_token);
 
     let bind_addr = std::env::var("MCP_HTTP_BIND").unwrap_or_else(|_| "0.0.0.0:8001".to_string());
     let listener = tokio::net::TcpListener::bind(&bind_addr)
@@ -193,7 +209,7 @@ async fn serve_http() -> Result<()> {
     Ok(())
 }
 
-fn http_app(server: WebsurfxServer) -> Router {
+fn http_app(server: WebsurfxServer, auth_token: Option<String>) -> Router {
     let mcp_service: StreamableHttpService<WebsurfxServer, LocalSessionManager> =
         StreamableHttpService::new(
             move || Ok(server.clone()),
@@ -207,6 +223,33 @@ fn http_app(server: WebsurfxServer) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .nest_service("/mcp", mcp_service)
+        .layer(middleware::from_fn_with_state(auth_token, require_bearer))
+}
+
+async fn require_bearer(
+    State(auth_token): State<Option<String>>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if req.uri().path() == "/healthz" {
+        return next.run(req).await;
+    }
+
+    let Some(expected) = auth_token.as_deref() else {
+        return next.run(req).await;
+    };
+
+    let provided = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "));
+
+    if provided.is_some_and(|value| value.as_bytes().ct_eq(expected.as_bytes()).into()) {
+        next.run(req).await
+    } else {
+        (StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    }
 }
 
 async fn healthz() -> &'static str {
@@ -281,16 +324,32 @@ mod tests {
         assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
     }
 
-    #[tokio::test]
-    async fn http_transport_serves_health_and_initialize() {
+    const INITIALIZE_BODY: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#;
+
+    async fn spawn_http_app(
+        auth_token: Option<String>,
+    ) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
         let server = WebsurfxServer::from_config(Config::default()).unwrap();
-        let app = http_app(server);
+        let app = http_app(server, auth_token);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let handle = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
+        (addr, handle)
+    }
 
+    fn parse_sse_json(body: &str) -> serde_json::Value {
+        let payload = body
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .unwrap_or(body);
+        serde_json::from_str(payload).unwrap()
+    }
+
+    #[tokio::test]
+    async fn http_transport_serves_health_and_initialize() {
+        let (addr, handle) = spawn_http_app(None).await;
         let client = reqwest::Client::new();
 
         let health = client
@@ -305,23 +364,66 @@ mod tests {
             .post(format!("http://{addr}/mcp"))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
-            .body(
-                r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}"#,
-            )
+            .body(INITIALIZE_BODY)
             .send()
             .await
             .unwrap();
 
         assert_eq!(response.status(), reqwest::StatusCode::OK);
-        let body = response.text().await.unwrap();
-        let payload = body
-            .lines()
-            .find_map(|line| line.strip_prefix("data: "))
-            .unwrap_or(&body);
-        let json: serde_json::Value = serde_json::from_str(payload).unwrap();
+        let json = parse_sse_json(&response.text().await.unwrap());
 
         assert_eq!(json["result"]["serverInfo"]["name"], "websurfx-mcp");
         assert_eq!(json["result"]["protocolVersion"], "2025-03-26");
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn http_transport_requires_token_when_configured() {
+        let (addr, handle) = spawn_http_app(Some("secret-token".to_string())).await;
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/mcp");
+
+        let health = client
+            .get(format!("http://{addr}/healthz"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(health.status(), reqwest::StatusCode::OK);
+
+        let missing = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(INITIALIZE_BODY)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        let wrong = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Authorization", "Bearer wrong-token")
+            .body(INITIALIZE_BODY)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(wrong.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        let authorized = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Authorization", "Bearer secret-token")
+            .body(INITIALIZE_BODY)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(authorized.status(), reqwest::StatusCode::OK);
+        let json = parse_sse_json(&authorized.text().await.unwrap());
+        assert_eq!(json["result"]["serverInfo"]["name"], "websurfx-mcp");
 
         handle.abort();
     }

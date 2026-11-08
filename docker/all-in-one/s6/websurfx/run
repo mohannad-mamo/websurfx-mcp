@@ -1,0 +1,4 @@
+#!/command/with-contenv sh
+export HOME=/home/websurfx
+cd /opt/websurfx
+exec /command/s6-setuidgid websurfx /usr/local/bin/websurfx

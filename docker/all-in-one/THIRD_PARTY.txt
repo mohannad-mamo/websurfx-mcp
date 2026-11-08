@@ -1,0 +1,24 @@
+This image bundles two components with different licenses.
+
+1. websurfx-mcp
+   License: MIT
+   Files:
+     /usr/share/licenses/websurfx-mcp/LICENSE
+     /usr/share/licenses/websurfx-mcp/NOTICE
+
+2. Websurfx v1.31.1
+   License: AGPL-3.0
+   Upstream: https://github.com/neon-mmd/websurfx
+   Tag: v1.31.1 (commit 5448456bd2e92f166c463632815e113dcfe07b17)
+   License file:
+     /usr/share/licenses/websurfx/LICENSE-AGPL-3.0
+   Corresponding source for this image:
+     /usr/share/src/websurfx-source.tar.gz
+
+The combined image is not MIT-only: it contains MIT-licensed websurfx-mcp and
+AGPL-3.0-licensed Websurfx. If you redistribute this image, keep these files and
+the corresponding Websurfx source available.
+
+The baked Websurfx configuration is at /etc/xdg/websurfx/config.lua. It changes
+binding_ip to 0.0.0.0, enables production_use, and otherwise follows the
+upstream v1.31.1 defaults.

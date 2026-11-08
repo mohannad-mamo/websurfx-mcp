@@ -36,11 +36,13 @@ is offered.
 
 - `websurfx-mcp` is a read-only search proxy for a Websurfx instance.
 - `stdio` is the default transport and is intended for local MCP clients.
-- The HTTP transport (`MCP_TRANSPORT=http`) has **no authentication**. Anyone
-  who can reach `/mcp` can run searches through the configured Websurfx
+- The HTTP transport (`MCP_TRANSPORT=http`) is unauthenticated unless
+  `MCP_AUTH_TOKEN` is set. When set, `/mcp` requires
+  `Authorization: Bearer <token>`; `/healthz` remains public. Without a token,
+  anyone who can reach `/mcp` can run searches through the configured Websurfx
   instance. Exposing it directly to the internet is a deployment choice, not a
-  vulnerability by itself; run it behind an authenticating reverse proxy with
-  TLS.
+  vulnerability by itself; use TLS and preferably an authenticating reverse
+  proxy.
 - The server does not store search queries or results.
 - Search results, safe-search behavior, and engine availability are controlled
   by Websurfx and its configuration.
