@@ -78,6 +78,13 @@ engines, categories, and language on the Websurfx server itself.
 
 The server sends only `q`, `json=true`, `page`, and `safesearch`.
 
+### Failure Reporting
+
+Websurfx can return no results because an upstream engine failed, a query was
+blocked by safe search, or no engines are enabled. Instead of reporting those
+as an ordinary empty result, the tool appends an `Engine warnings` list and/or
+a notice explaining the status returned by Websurfx.
+
 ### Example Queries
 
 Ask Zed:

@@ -110,7 +110,16 @@ pub struct SearchResult {
     pub score: f64,
 }
 
-#[derive(Debug, Deserialize)]
+/// Error information reported by Websurfx for an upstream engine.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct EngineErrorInfo {
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub engine: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
 #[allow(dead_code)]
 pub struct SearchResponse {
     #[serde(default)]
@@ -119,6 +128,19 @@ pub struct SearchResponse {
     pub number_of_results: u64,
     #[serde(default)]
     pub results: Vec<SearchResult>,
+    // Websurfx may spell these camelCase (v1.31.x) or snake_case depending on
+    // the version/config, and engine_errors_info is sometimes null.
+    #[serde(default, alias = "engineErrorsInfo")]
+    pub engine_errors_info: Option<Vec<EngineErrorInfo>>,
+    #[serde(default)]
+    pub disallowed: bool,
+    #[serde(default)]
+    pub filtered: bool,
+    #[serde(default, alias = "safeSearchLevel")]
+    pub safe_search_level: u8,
+    #[serde(default, alias = "noEnginesSelected")]
+    pub no_engines_selected: bool,
+    // SearXNG-compatible fields; Websurfx does not currently send these.
     #[serde(default)]
     pub engines: Vec<EngineInfo>,
     #[serde(default)]
@@ -251,60 +273,103 @@ impl WebsurfxClient {
     }
 
     pub fn format_results(&self, response: &SearchResponse) -> String {
-        if response.results.is_empty() {
-            return "No results found for your search query.".to_string();
-        }
-
+        let engine_errors = response.engine_errors_info.as_deref().unwrap_or_default();
         let mut formatted = String::new();
 
-        formatted.push_str(&format!("Search Results for: \"{}\"\n", response.query));
-        formatted.push_str(&format!("Found {} results\n\n", response.results.len()));
+        if response.results.is_empty() {
+            formatted.push_str(&format!("No results found for: \"{}\"\n", response.query));
+        } else {
+            formatted.push_str(&format!("Search Results for: \"{}\"\n", response.query));
+            formatted.push_str(&format!("Found {} results\n\n", response.results.len()));
 
-        let results_to_show = response.results.iter().take(self.config.max_results);
+            let results_to_show = response.results.iter().take(self.config.max_results);
 
-        for (index, result) in results_to_show.enumerate() {
-            formatted.push_str(&format!("{}. {}\n", index + 1, result.title));
-            formatted.push_str(&format!("   URL: {}\n", result.url));
+            for (index, result) in results_to_show.enumerate() {
+                formatted.push_str(&format!("{}. {}\n", index + 1, result.title));
+                formatted.push_str(&format!("   URL: {}\n", result.url));
 
-            if !result.content.is_empty() {
-                // Truncate on a UTF-8 character boundary. Slicing by bytes
-                // (&result.content[..MAX_CONTENT_LENGTH]) panics for multi-byte
-                // scripts like Arabic, Hebrew, CJK, etc.
-                let content = if result.content.chars().count() > MAX_CONTENT_LENGTH {
-                    let mut truncated: String =
-                        result.content.chars().take(MAX_CONTENT_LENGTH).collect();
-                    truncated.push_str("...");
-                    truncated
-                } else {
-                    result.content.clone()
-                };
-                formatted.push_str(&format!("   {}\n", content));
+                if !result.content.is_empty() {
+                    // Truncate on a UTF-8 character boundary. Slicing by bytes
+                    // (&result.content[..MAX_CONTENT_LENGTH]) panics for multi-byte
+                    // scripts like Arabic, Hebrew, CJK, etc.
+                    let content = if result.content.chars().count() > MAX_CONTENT_LENGTH {
+                        let mut truncated: String =
+                            result.content.chars().take(MAX_CONTENT_LENGTH).collect();
+                        truncated.push_str("...");
+                        truncated
+                    } else {
+                        result.content.clone()
+                    };
+                    formatted.push_str(&format!("   {}\n", content));
+                }
+
+                if !result.engine.is_empty() {
+                    formatted.push_str(&format!("   Source: {}\n", result.engine));
+                }
+
+                formatted.push('\n');
             }
 
-            if !result.engine.is_empty() {
-                formatted.push_str(&format!("   Source: {}\n", result.engine));
+            if !response.suggestions.is_empty() {
+                formatted.push_str("Suggestions:\n");
+                for suggestion in &response.suggestions {
+                    formatted.push_str(&format!("  - {}\n", suggestion));
+                }
+                formatted.push('\n');
             }
 
-            formatted.push('\n');
-        }
-
-        if !response.suggestions.is_empty() {
-            formatted.push_str("Suggestions:\n");
-            for suggestion in &response.suggestions {
-                formatted.push_str(&format!("  - {}\n", suggestion));
+            if !response.engines.is_empty() {
+                formatted.push_str("Search engines used: ");
+                let engine_names: Vec<String> =
+                    response.engines.iter().map(|e| e.name.clone()).collect();
+                formatted.push_str(&engine_names.join(", "));
+                formatted.push('\n');
             }
-            formatted.push('\n');
         }
 
-        if !response.engines.is_empty() {
-            formatted.push_str("Search engines used: ");
-            let engine_names: Vec<String> =
-                response.engines.iter().map(|e| e.name.clone()).collect();
-            formatted.push_str(&engine_names.join(", "));
-            formatted.push('\n');
-        }
+        self.append_response_notices(&mut formatted, response, engine_errors);
 
         formatted
+    }
+
+    fn append_response_notices(
+        &self,
+        formatted: &mut String,
+        response: &SearchResponse,
+        engine_errors: &[EngineErrorInfo],
+    ) {
+        if response.disallowed {
+            formatted.push_str(&format!(
+                "\nWebsurfx disallowed this query at safe search level {} (server-side blocklist).\n",
+                response.safe_search_level
+            ));
+        }
+
+        if response.filtered {
+            formatted
+                .push_str("\nWebsurfx reported the results as filtered (server-side filtering).\n");
+        }
+
+        if response.no_engines_selected {
+            formatted.push_str("\nWebsurfx has no search engines selected/enabled.\n");
+        }
+
+        if !engine_errors.is_empty() {
+            formatted.push_str("\nEngine warnings:\n");
+            for info in engine_errors {
+                let engine = if info.engine.is_empty() {
+                    "unknown engine"
+                } else {
+                    &info.engine
+                };
+                let error = if info.error.is_empty() {
+                    "unknown error"
+                } else {
+                    &info.error
+                };
+                formatted.push_str(&format!("- {}: {}\n", engine, error));
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -394,6 +459,125 @@ mod tests {
 
         let no_results_error = WebsurfxError::NoResults;
         assert!(!WebsurfxClient::is_retryable_error(&no_results_error));
+    }
+
+    #[test]
+    fn test_parse_websurfx_payload_with_snake_case_fields() {
+        let json = r#"{
+            "results": [],
+            "engine_errors_info": [
+                {"error": "EmptyResultSet", "engine": "duckduckgo", "severity_color": "blue"}
+            ],
+            "disallowed": false,
+            "filtered": false,
+            "safe_search_level": 4,
+            "no_engines_selected": false
+        }"#;
+
+        let response: SearchResponse = serde_json::from_str(json).unwrap();
+
+        assert_eq!(response.safe_search_level, 4);
+        let errors = response.engine_errors_info.as_deref().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].engine, "duckduckgo");
+        assert_eq!(errors[0].error, "EmptyResultSet");
+    }
+
+    #[test]
+    fn test_parse_websurfx_payload_with_camel_case_fields_and_null_errors() {
+        let json = r#"{
+            "results": [],
+            "engineErrorsInfo": null,
+            "disallowed": false,
+            "filtered": true,
+            "safeSearchLevel": 3,
+            "noEnginesSelected": true
+        }"#;
+
+        let response: SearchResponse = serde_json::from_str(json).unwrap();
+
+        assert!(response.engine_errors_info.is_none());
+        assert!(response.filtered);
+        assert!(response.no_engines_selected);
+        assert_eq!(response.safe_search_level, 3);
+    }
+
+    #[test]
+    fn test_format_surfaces_engine_errors_instead_of_silent_empty() {
+        let client = WebsurfxClient::new(Config::default()).unwrap();
+        let response = SearchResponse {
+            query: "rust".to_string(),
+            engine_errors_info: Some(vec![EngineErrorInfo {
+                engine: "duckduckgo".to_string(),
+                error: "EmptyResultSet".to_string(),
+            }]),
+            ..Default::default()
+        };
+
+        let formatted = client.format_results(&response);
+
+        assert!(formatted.contains("No results found for: \"rust\""));
+        assert!(formatted.contains("Engine warnings:"));
+        assert!(formatted.contains("- duckduckgo: EmptyResultSet"));
+    }
+
+    #[test]
+    fn test_format_surfaces_status_flags() {
+        let client = WebsurfxClient::new(Config::default()).unwrap();
+
+        let disallowed = SearchResponse {
+            query: "blocked".to_string(),
+            disallowed: true,
+            safe_search_level: 4,
+            ..Default::default()
+        };
+        let formatted = client.format_results(&disallowed);
+        assert!(formatted.contains("disallowed"));
+        assert!(formatted.contains("safe search level 4"));
+
+        let filtered = SearchResponse {
+            query: "filtered".to_string(),
+            filtered: true,
+            ..Default::default()
+        };
+        assert!(client.format_results(&filtered).contains("filtered"));
+
+        let no_engines = SearchResponse {
+            query: "none".to_string(),
+            no_engines_selected: true,
+            ..Default::default()
+        };
+        assert!(client
+            .format_results(&no_engines)
+            .contains("no search engines selected"));
+    }
+
+    #[test]
+    fn test_format_keeps_results_and_adds_engine_warnings() {
+        let client = WebsurfxClient::new(Config::default()).unwrap();
+        let response = SearchResponse {
+            query: "rust".to_string(),
+            results: vec![SearchResult {
+                title: "Rust".to_string(),
+                url: "https://www.rust-lang.org/".to_string(),
+                content: "A language empowering everyone.".to_string(),
+                engine: "wikipedia-en".to_string(),
+                category: String::new(),
+                score: 0.0,
+            }],
+            engine_errors_info: Some(vec![EngineErrorInfo {
+                engine: "duckduckgo".to_string(),
+                error: "EmptyResultSet".to_string(),
+            }]),
+            ..Default::default()
+        };
+
+        let formatted = client.format_results(&response);
+
+        assert!(formatted.contains("1. Rust"));
+        assert!(formatted.contains("Source: wikipedia-en"));
+        assert!(formatted.contains("Engine warnings:"));
+        assert!(formatted.contains("- duckduckgo: EmptyResultSet"));
     }
 
     #[tokio::test]
