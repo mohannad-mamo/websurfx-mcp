@@ -35,7 +35,7 @@ GHCR:
 | --- | --- |
 | `edge` | Latest build from `main` |
 | `sha-<shortsha>` | Exact commit |
-| `0.3.0`, `0.3`, `latest` | Release tags |
+| `0.3.1`, `0.3`, `latest` | Release tags |
 
 ```bash
 docker pull ghcr.io/mohannad-mamo/websurfx-mcp:edge
@@ -56,7 +56,7 @@ The Dockerfile is architecture-neutral. To build for both common platforms
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/mohannad-mamo/websurfx-mcp:0.3.0 \
+  -t ghcr.io/mohannad-mamo/websurfx-mcp:0.3.1 \
   --push .
 ```
 
@@ -100,7 +100,7 @@ published to GHCR for `linux/amd64` and `linux/arm64`:
 | --- | --- |
 | `edge` | Latest build from `main` |
 | `sha-<shortsha>` | Exact commit |
-| `0.3.0-ws1.31.1`, `0.3-ws1.31.1`, `latest` | Release tags |
+| `0.3.1-ws1.31.1`, `0.3-ws1.31.1`, `latest` | Release tags |
 
 ```bash
 docker pull ghcr.io/mohannad-mamo/websurfx-all-in-one:edge
