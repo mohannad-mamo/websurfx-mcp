@@ -1,9 +1,11 @@
 target/
 .DS_Store
 .git/
+.github/
 .gitignore
+*.rdb
 README.md
-LICENSE
 *.md
 .dockerignore
 Dockerfile
+tests/

@@ -24,6 +24,50 @@ cd websurfx-mcp
 cargo install --path .
 ```
 
+## Docker
+
+Build locally:
+
+```bash
+docker build -t websurfx-mcp .
+```
+
+The Dockerfile is architecture-neutral. To build for both common platforms
+(requires Buildx; `--push` publishes a multi-arch manifest):
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/mohannad-mamo/websurfx-mcp:0.2.0 \
+  --push .
+```
+
+The runtime image is Alpine-based, runs as a non-root user, and includes
+`ca-certificates`, `LICENSE`, and `NOTICE` under
+`/usr/share/licenses/websurfx-mcp/`.
+
+### stdio
+
+```bash
+docker run --rm -i \
+  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
+  websurfx-mcp
+```
+
+### HTTP
+
+```bash
+docker run --rm -p 8001:8001 \
+  -e MCP_TRANSPORT=http \
+  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
+  websurfx-mcp
+```
+
+Verify it is up with `curl http://localhost:8001/healthz`.
+
+On Linux, add `--add-host=host.docker.internal:host-gateway` to reach a
+Websurfx instance running directly on the host.
+
 ## Configuration
 
 Optional environment variables:
