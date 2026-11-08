@@ -107,7 +107,6 @@ jobs:
     needs: test
     if: github.event_name != 'pull_request' && github.repository == 'mohannad-mamo/websurfx-mcp'
     outputs:
-      tags: ${{ steps.meta.outputs.tags }}
       labels: ${{ steps.meta.outputs.labels }}
     steps:
       - name: Image metadata
@@ -117,12 +116,6 @@ jobs:
           images: |
             ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one
             ${{ secrets.DOCKERHUB_USERNAME || 'mohannad-mamo' }}/websurfx-all-in-one
-          tags: |
-            type=sha,prefix=sha-,format=short
-            type=raw,value=edge,enable={{is_default_branch}}
-            type=semver,pattern={{version}}-ws${{ env.WEBSURFX_VERSION }}
-            type=semver,pattern={{major}}.{{minor}}-ws${{ env.WEBSURFX_VERSION }}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
           labels: |
             org.opencontainers.image.title=websurfx-all-in-one
             org.opencontainers.image.description=Websurfx ${{ env.WEBSURFX_VERSION }} plus websurfx-mcp
@@ -199,32 +192,51 @@ jobs:
 
       - name: Create multi-arch manifest
         env:
-          TAGS: ${{ needs.all-in-one-meta.outputs.tags }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          WEBSURFX_VERSION: ${{ env.WEBSURFX_VERSION }}
         run: |
-          set -euo pipefail
-          ghcr_args=()
-          dockerhub_args=()
-          while IFS= read -r tag; do
-            if [ -n "$tag" ]; then
-              case "$tag" in
-                ghcr.io/*) ghcr_args+=("-t" "$tag") ;;
-                *) dockerhub_args+=("-t" "$tag") ;;
-              esac
-            fi
-          done <<< "$TAGS"
-          refs=(
-            "ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one:sha-${GITHUB_SHA}-amd64"
-            "ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one:sha-${GITHUB_SHA}-arm64"
-          )
-          if [ "${#ghcr_args[@]}" -eq 0 ]; then
-            echo "No GHCR tags were generated" >&2
+          set -euxo pipefail
+          if [ -z "${DOCKERHUB_USERNAME:-}" ]; then
+            echo "DOCKERHUB_USERNAME secret is not set" >&2
             exit 1
           fi
-          docker buildx imagetools create "${ghcr_args[@]}" "${refs[@]}"
-          if [ "${#dockerhub_args[@]}" -gt 0 ]; then
-            docker buildx imagetools create "${dockerhub_args[@]}" "${refs[@]}"
+
+          ghcr_image="ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one"
+          hub_image="${DOCKERHUB_USERNAME}/websurfx-all-in-one"
+          short_sha="${GITHUB_SHA::7}"
+
+          ghcr_tags=("${ghcr_image}:sha-${short_sha}")
+          hub_tags=("${hub_image}:sha-${short_sha}")
+
+          if [ "$GITHUB_REF_NAME" = "main" ]; then
+            ghcr_tags+=("${ghcr_image}:edge")
+            hub_tags+=("${hub_image}:edge")
           fi
-          docker buildx imagetools inspect "${ghcr_args[1]}"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            major_minor="${version%.*}"
+            ghcr_tags+=("${ghcr_image}:${version}-ws${WEBSURFX_VERSION}")
+            ghcr_tags+=("${ghcr_image}:${major_minor}-ws${WEBSURFX_VERSION}")
+            ghcr_tags+=("${ghcr_image}:latest")
+            hub_tags+=("${hub_image}:${version}-ws${WEBSURFX_VERSION}")
+            hub_tags+=("${hub_image}:${major_minor}-ws${WEBSURFX_VERSION}")
+            hub_tags+=("${hub_image}:latest")
+          fi
+
+          refs=(
+            "${ghcr_image}:sha-${GITHUB_SHA}-amd64"
+            "${ghcr_image}:sha-${GITHUB_SHA}-arm64"
+          )
+
+          ghcr_args=()
+          for tag in "${ghcr_tags[@]}"; do ghcr_args+=("-t" "$tag"); done
+          hub_args=()
+          for tag in "${hub_tags[@]}"; do hub_args+=("-t" "$tag"); done
+
+          docker buildx imagetools create "${ghcr_args[@]}" "${refs[@]}"
+          docker buildx imagetools create "${hub_args[@]}" "${refs[@]}"
+          docker buildx imagetools inspect "${ghcr_tags[0]}"
 
   all-in-one-smoke:
     name: All-in-one smoke
