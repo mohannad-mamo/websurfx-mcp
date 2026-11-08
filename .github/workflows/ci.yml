@@ -170,6 +170,9 @@ jobs:
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one,push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=all-in-one-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=all-in-one-${{ matrix.arch }}
+          # The per-arch digest must be a plain platform manifest so
+          # imagetools can merge the two digests into one index.
+          provenance: false
 
       - name: Export digest
         run: |
@@ -222,6 +225,7 @@ jobs:
           TAGS: ${{ needs.all-in-one-meta.outputs.tags }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
           ghcr_args=()
           dockerhub_args=()
           while IFS= read -r tag; do
@@ -236,6 +240,15 @@ jobs:
           for digest in *; do
             refs+=("ghcr.io/${{ github.repository_owner }}/websurfx-all-in-one@sha256:${digest}")
           done
+          if [ "${#refs[@]}" -ne 2 ]; then
+            echo "Expected 2 platform digests, found ${#refs[@]}" >&2
+            ls -la >&2
+            exit 1
+          fi
+          if [ "${#ghcr_args[@]}" -eq 0 ]; then
+            echo "No GHCR tags were generated" >&2
+            exit 1
+          fi
           docker buildx imagetools create "${ghcr_args[@]}" "${refs[@]}"
           if [ "${#dockerhub_args[@]}" -gt 0 ]; then
             docker buildx imagetools create "${dockerhub_args[@]}" "${refs[@]}"
