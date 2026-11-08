@@ -25,6 +25,9 @@ pub enum WebsurfxError {
     #[error("Websurfx API returned an error: {0}")]
     ApiError(String),
 
+    #[error("Websurfx API returned HTTP {status}: {body}")]
+    HttpStatusError { status: u16, body: String },
+
     #[error("No results found for the given query")]
     NoResults,
 
@@ -59,6 +62,9 @@ impl WebsurfxError {
             }
             WebsurfxError::ApiError(msg) => {
                 format!("Websurfx API error: {}", msg)
+            }
+            WebsurfxError::HttpStatusError { status, body } => {
+                format!("Websurfx API error (HTTP {}): {}", status, body)
             }
             WebsurfxError::NoResults => "No search results found for the given query".to_string(),
             WebsurfxError::UrlError(_) => "Invalid URL format".to_string(),

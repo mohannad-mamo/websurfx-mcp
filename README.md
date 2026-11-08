@@ -98,12 +98,14 @@ Ask Zed:
 ### Running Tests
 
 ```bash
-# Run unit tests
+# Run unit tests (the live test skips itself unless enabled)
 cargo test
 
-# Run integration tests (requires Websurfx at localhost:8080)
-cargo test -- --ignored
+# Run the live integration test (requires Websurfx at localhost:8080)
+WEBSURFX_LIVE=1 cargo test test_search_integration
 ```
+
+Set `WEBSURFX_BASE_URL` alongside `WEBSURFX_LIVE=1` to test a different instance.
 
 ### Project Structure
 

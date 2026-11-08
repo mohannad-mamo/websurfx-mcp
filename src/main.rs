@@ -80,7 +80,7 @@ impl WebsurfxServer {
             search_params = search_params.with_safe_search(safe_search);
         }
 
-        match self.client.search(search_params).await {
+        match self.client.search_with_retry(search_params).await {
             Ok(response) => {
                 let formatted_results = self.client.format_results(&response);
                 Ok(CallToolResult::success(vec![Content::text(
@@ -89,10 +89,7 @@ impl WebsurfxServer {
             }
             Err(e) => {
                 eprintln!("Search failed: {:?}", e);
-                Err(ErrorData::internal_error(
-                    format!("Search failed: {}", e),
-                    None,
-                ))
+                Err(e.into())
             }
         }
     }

@@ -9,6 +9,7 @@ const DEFAULT_FORMAT: &str = "true";
 const MIN_PAGE: u32 = 1;
 const MAX_PAGE: u32 = 50;
 const MAX_SAFE_SEARCH_LEVEL: u8 = 4;
+const MAX_QUERY_LENGTH: usize = 512;
 const MAX_CONTENT_LENGTH: usize = 200;
 const MAX_HTTP_CLIENT_POOL_SIZE: usize = 3;
 const HTTP_CLIENT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -73,6 +74,13 @@ impl SearchParams {
             ));
         }
 
+        if self.q.chars().count() > MAX_QUERY_LENGTH {
+            return Err(WebsurfxError::InvalidParameters(format!(
+                "Query must be at most {} characters",
+                MAX_QUERY_LENGTH
+            )));
+        }
+
         if let Some(page) = self.page {
             if !(MIN_PAGE..=MAX_PAGE).contains(&page) {
                 return Err(WebsurfxError::InvalidParameters(format!(
@@ -104,8 +112,6 @@ pub struct SearchResult {
     pub content: String,
     #[serde(default, alias = "engines", deserialize_with = "string_or_vec")]
     pub engine: String,
-    #[serde(default, alias = "categories", deserialize_with = "string_or_vec")]
-    pub category: String,
     #[serde(default, alias = "relevanceScore")]
     pub score: f64,
 }
@@ -120,12 +126,9 @@ pub struct EngineErrorInfo {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)]
 pub struct SearchResponse {
     #[serde(default)]
     pub query: String,
-    #[serde(default)]
-    pub number_of_results: u64,
     #[serde(default)]
     pub results: Vec<SearchResult>,
     // Websurfx may spell these camelCase (v1.31.x) or snake_case depending on
@@ -140,31 +143,6 @@ pub struct SearchResponse {
     pub safe_search_level: u8,
     #[serde(default, alias = "noEnginesSelected")]
     pub no_engines_selected: bool,
-    // SearXNG-compatible fields; Websurfx does not currently send these.
-    #[serde(default)]
-    pub engines: Vec<EngineInfo>,
-    #[serde(default)]
-    pub suggestions: Vec<String>,
-    #[serde(default)]
-    pub search: SearchInfo,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)]
-pub struct EngineInfo {
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub count: u32,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)]
-pub struct SearchInfo {
-    #[serde(default)]
-    pub total_results: Option<u64>,
-    #[serde(default)]
-    pub search_time: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -205,11 +183,9 @@ impl WebsurfxClient {
             .map_err(WebsurfxError::HttpError)?;
 
         if !response.status().is_success() {
-            return Err(WebsurfxError::ApiError(format!(
-                "HTTP {}: {}",
-                response.status(),
-                response.text().await.unwrap_or_default()
-            )));
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            return Err(WebsurfxError::HttpStatusError { status, body });
         }
 
         let mut search_response: SearchResponse =
@@ -239,10 +215,12 @@ impl WebsurfxClient {
                         .status()
                         .is_some_and(|status| status.is_server_error())
             }
-            WebsurfxError::ApiError(_) => {
-                // Retry on API errors that might be transient
-                true
+            WebsurfxError::HttpStatusError { status, .. } => {
+                // Retry on server errors and rate limiting, but not on other
+                // client errors such as a malformed query.
+                (500..=599).contains(status) || *status == 429
             }
+            WebsurfxError::ApiError(_) => false,
             _ => false,
         }
     }
@@ -279,8 +257,17 @@ impl WebsurfxClient {
         if response.results.is_empty() {
             formatted.push_str(&format!("No results found for: \"{}\"\n", response.query));
         } else {
+            let total = response.results.len();
+            let noun = if total == 1 { "result" } else { "results" };
             formatted.push_str(&format!("Search Results for: \"{}\"\n", response.query));
-            formatted.push_str(&format!("Found {} results\n\n", response.results.len()));
+            if total > self.config.max_results {
+                formatted.push_str(&format!(
+                    "Found {} {} (showing the first {})\n\n",
+                    total, noun, self.config.max_results
+                ));
+            } else {
+                formatted.push_str(&format!("Found {} {}\n\n", total, noun));
+            }
 
             let results_to_show = response.results.iter().take(self.config.max_results);
 
@@ -307,22 +294,6 @@ impl WebsurfxClient {
                     formatted.push_str(&format!("   Source: {}\n", result.engine));
                 }
 
-                formatted.push('\n');
-            }
-
-            if !response.suggestions.is_empty() {
-                formatted.push_str("Suggestions:\n");
-                for suggestion in &response.suggestions {
-                    formatted.push_str(&format!("  - {}\n", suggestion));
-                }
-                formatted.push('\n');
-            }
-
-            if !response.engines.is_empty() {
-                formatted.push_str("Search engines used: ");
-                let engine_names: Vec<String> =
-                    response.engines.iter().map(|e| e.name.clone()).collect();
-                formatted.push_str(&engine_names.join(", "));
                 formatted.push('\n');
             }
         }
@@ -411,6 +382,12 @@ mod tests {
 
         let empty_query = SearchParams::new("   ".to_string());
         assert!(empty_query.validate().is_err());
+
+        let max_length_query = SearchParams::new("x".repeat(MAX_QUERY_LENGTH));
+        assert!(max_length_query.validate().is_ok());
+
+        let too_long_query = SearchParams::new("x".repeat(MAX_QUERY_LENGTH + 1));
+        assert!(too_long_query.validate().is_err());
     }
 
     #[test]
@@ -451,8 +428,26 @@ mod tests {
 
     #[test]
     fn test_retryable_error_detection() {
+        let server_error = WebsurfxError::HttpStatusError {
+            status: 503,
+            body: "unavailable".to_string(),
+        };
+        assert!(WebsurfxClient::is_retryable_error(&server_error));
+
+        let rate_limited = WebsurfxError::HttpStatusError {
+            status: 429,
+            body: "slow down".to_string(),
+        };
+        assert!(WebsurfxClient::is_retryable_error(&rate_limited));
+
+        let bad_request = WebsurfxError::HttpStatusError {
+            status: 400,
+            body: "bad query".to_string(),
+        };
+        assert!(!WebsurfxClient::is_retryable_error(&bad_request));
+
         let api_error = WebsurfxError::ApiError("server busy".to_string());
-        assert!(WebsurfxClient::is_retryable_error(&api_error));
+        assert!(!WebsurfxClient::is_retryable_error(&api_error));
 
         let param_error = WebsurfxError::InvalidParameters("invalid query".to_string());
         assert!(!WebsurfxClient::is_retryable_error(&param_error));
@@ -500,6 +495,23 @@ mod tests {
         assert!(response.filtered);
         assert!(response.no_engines_selected);
         assert_eq!(response.safe_search_level, 3);
+    }
+
+    #[test]
+    fn test_parse_search_result_aliases() {
+        let json = r#"{
+            "title": "Rust",
+            "url": "https://www.rust-lang.org/",
+            "description": "A language empowering everyone.",
+            "engines": ["wikipedia-en", "duckduckgo"],
+            "relevanceScore": 0.75
+        }"#;
+
+        let result: SearchResult = serde_json::from_str(json).unwrap();
+
+        assert_eq!(result.content, "A language empowering everyone.");
+        assert_eq!(result.engine, "wikipedia-en, duckduckgo");
+        assert_eq!(result.score, 0.75);
     }
 
     #[test]
@@ -562,7 +574,6 @@ mod tests {
                 url: "https://www.rust-lang.org/".to_string(),
                 content: "A language empowering everyone.".to_string(),
                 engine: "wikipedia-en".to_string(),
-                category: String::new(),
                 score: 0.0,
             }],
             engine_errors_info: Some(vec![EngineErrorInfo {
@@ -580,27 +591,62 @@ mod tests {
         assert!(formatted.contains("- duckduckgo: EmptyResultSet"));
     }
 
+    #[test]
+    fn test_format_reports_when_results_are_truncated() {
+        let client = WebsurfxClient::new(Config {
+            max_results: 1,
+            ..Config::default()
+        })
+        .unwrap();
+        let response = SearchResponse {
+            query: "rust".to_string(),
+            results: vec![
+                SearchResult {
+                    title: "First".to_string(),
+                    url: "https://a.example".to_string(),
+                    content: String::new(),
+                    engine: String::new(),
+                    score: 0.0,
+                },
+                SearchResult {
+                    title: "Second".to_string(),
+                    url: "https://b.example".to_string(),
+                    content: String::new(),
+                    engine: String::new(),
+                    score: 0.0,
+                },
+            ],
+            ..Default::default()
+        };
+
+        let formatted = client.format_results(&response);
+
+        assert!(formatted.contains("Found 2 results (showing the first 1)"));
+        assert!(formatted.contains("1. First"));
+        assert!(!formatted.contains("2. Second"));
+    }
+
     #[tokio::test]
-    #[ignore = "requires a running Websurfx instance at localhost:8080"]
     async fn test_search_integration() {
         use std::env;
+        use url::Url;
 
-        env::set_var("WEBSURFX_BASE_URL", "http://localhost:8080");
-        let config = Config::from_env().expect("Failed to load config");
+        if env::var("WEBSURFX_LIVE").unwrap_or_default() != "1" {
+            return;
+        }
+
+        let base_url =
+            env::var("WEBSURFX_BASE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
+        let config = Config {
+            base_url: Url::parse(&base_url).expect("invalid WEBSURFX_BASE_URL"),
+            ..Config::default()
+        };
         let client = WebsurfxClient::new(config).expect("Failed to create client");
 
         let params = SearchParams::new("rust programming language".to_string()).with_page(1);
+        let response = client.search(params).await.expect("Search failed");
 
-        let result = client.search(params).await;
-
-        match result {
-            Ok(response) => {
-                assert!(!response.query.is_empty());
-                println!("Search successful: {} results", response.results.len());
-            }
-            Err(e) => {
-                panic!("Search failed: {:?}", e);
-            }
-        }
+        assert!(!response.query.is_empty());
+        println!("Search successful: {} results", response.results.len());
     }
 }
