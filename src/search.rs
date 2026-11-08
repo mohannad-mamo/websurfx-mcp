@@ -1,10 +1,10 @@
 use crate::config::Config;
-use crate::errors::{SearxngError, SearxngResult};
+use crate::errors::{WebsurfxError, WebsurfxResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-const USER_AGENT: &str = "searxng-mcp/0.1";
+const USER_AGENT: &str = "websurfx-mcp/0.2";
 const DEFAULT_FORMAT: &str = "true";
 const VALID_TIME_RANGES: &[&str] = &["day", "month", "year"];
 const MAX_SAFE_SEARCH_LEVEL: u8 = 2;
@@ -97,16 +97,16 @@ impl SearchParams {
         self
     }
 
-    pub fn validate(&self) -> SearxngResult<()> {
+    pub fn validate(&self) -> WebsurfxResult<()> {
         if self.q.trim().is_empty() {
-            return Err(SearxngError::InvalidParameters(
+            return Err(WebsurfxError::InvalidParameters(
                 "Query cannot be empty".to_string(),
             ));
         }
 
         if let Some(ref time_range) = self.time_range {
             if !VALID_TIME_RANGES.contains(&time_range.as_str()) {
-                return Err(SearxngError::InvalidParameters(
+                return Err(WebsurfxError::InvalidParameters(
                     "Time range must be 'day', 'month', or 'year'".to_string(),
                 ));
             }
@@ -114,7 +114,7 @@ impl SearchParams {
 
         if let Some(safesearch) = self.safesearch {
             if safesearch > MAX_SAFE_SEARCH_LEVEL {
-                return Err(SearxngError::InvalidParameters(
+                return Err(WebsurfxError::InvalidParameters(
                     "Safe search level must be 0, 1, or 2".to_string(),
                 ));
             }
@@ -176,27 +176,27 @@ pub struct SearchInfo {
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct SearxngClient {
+pub struct WebsurfxClient {
     client: Client,
     config: Config,
 }
 
-impl SearxngClient {
+impl WebsurfxClient {
     #[allow(dead_code)]
-    pub fn new(config: Config) -> SearxngResult<Self> {
+    pub fn new(config: Config) -> WebsurfxResult<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(config.timeout_seconds))
             .user_agent(USER_AGENT)
             .pool_max_idle_per_host(MAX_HTTP_CLIENT_POOL_SIZE)
             .pool_idle_timeout(HTTP_CLIENT_IDLE_TIMEOUT)
             .build()
-            .map_err(SearxngError::HttpError)?;
+            .map_err(WebsurfxError::HttpError)?;
 
         Ok(Self { client, config })
     }
 
     #[allow(dead_code)]
-    pub async fn search(&self, mut params: SearchParams) -> SearxngResult<SearchResponse> {
+    pub async fn search(&self, mut params: SearchParams) -> WebsurfxResult<SearchResponse> {
         params.validate()?;
 
         // Ensure format is always set to json for API responses
@@ -208,10 +208,10 @@ impl SearxngClient {
             .query(&params)
             .send()
             .await
-            .map_err(SearxngError::HttpError)?;
+            .map_err(WebsurfxError::HttpError)?;
 
         if !response.status().is_success() {
-            return Err(SearxngError::ApiError(format!(
+            return Err(WebsurfxError::ApiError(format!(
                 "HTTP {}: {}",
                 response.status(),
                 response.text().await.unwrap_or_default()
@@ -219,7 +219,7 @@ impl SearxngClient {
         }
 
         let mut search_response: SearchResponse =
-            response.json().await.map_err(SearxngError::HttpError)?;
+            response.json().await.map_err(WebsurfxError::HttpError)?;
 
         // Websurfx does not echo the query; fill it in from the request
         if search_response.query.is_empty() {
@@ -230,14 +230,14 @@ impl SearxngClient {
     }
 
     #[allow(dead_code)]
-    pub async fn search_with_retry(&self, params: SearchParams) -> SearxngResult<SearchResponse> {
+    pub async fn search_with_retry(&self, params: SearchParams) -> WebsurfxResult<SearchResponse> {
         self.search_with_retry_impl(params, MAX_HTTP_REQUEST_RETRY)
             .await
     }
 
-    fn is_retryable_error(error: &SearxngError) -> bool {
+    fn is_retryable_error(error: &WebsurfxError) -> bool {
         match error {
-            SearxngError::HttpError(reqwest_error) => {
+            WebsurfxError::HttpError(reqwest_error) => {
                 // Retry on network timeouts, connection errors, and 5xx server errors
                 reqwest_error.is_timeout()
                     || reqwest_error.is_connect()
@@ -245,7 +245,7 @@ impl SearxngClient {
                         .status()
                         .is_some_and(|status| status.is_server_error())
             }
-            SearxngError::ApiError(_) => {
+            WebsurfxError::ApiError(_) => {
                 // Retry on API errors that might be transient
                 true
             }
@@ -258,7 +258,7 @@ impl SearxngClient {
         &self,
         params: SearchParams,
         max_retries: u32,
-    ) -> SearxngResult<SearchResponse> {
+    ) -> WebsurfxResult<SearchResponse> {
         let mut last_error = None;
 
         for attempt in 0..max_retries {
@@ -275,7 +275,7 @@ impl SearxngClient {
         }
 
         Err(last_error
-            .unwrap_or_else(|| SearxngError::ApiError("Max retries exceeded".to_string())))
+            .unwrap_or_else(|| WebsurfxError::ApiError("Max retries exceeded".to_string())))
     }
 
     pub fn format_results(&self, response: &SearchResponse) -> String {
@@ -299,11 +299,8 @@ impl SearxngClient {
                 // (&result.content[..MAX_CONTENT_LENGTH]) panics for multi-byte
                 // scripts like Arabic, Hebrew, CJK, etc.
                 let content = if result.content.chars().count() > MAX_CONTENT_LENGTH {
-                    let mut truncated: String = result
-                        .content
-                        .chars()
-                        .take(MAX_CONTENT_LENGTH)
-                        .collect();
+                    let mut truncated: String =
+                        result.content.chars().take(MAX_CONTENT_LENGTH).collect();
                     truncated.push_str("...");
                     truncated
                 } else {
@@ -339,7 +336,7 @@ impl SearxngClient {
     }
 
     #[allow(dead_code)]
-    pub async fn test_connection(&self) -> SearxngResult<()> {
+    pub async fn test_connection(&self) -> WebsurfxResult<()> {
         self.config.validate().await
     }
 }
@@ -418,30 +415,30 @@ mod tests {
     #[tokio::test]
     async fn test_client_creation() {
         let config = Config::default();
-        let client = SearxngClient::new(config);
+        let client = WebsurfxClient::new(config);
         assert!(client.is_ok());
     }
 
     #[test]
     fn test_retryable_error_detection() {
-        let api_error = SearxngError::ApiError("server busy".to_string());
-        assert!(SearxngClient::is_retryable_error(&api_error));
+        let api_error = WebsurfxError::ApiError("server busy".to_string());
+        assert!(WebsurfxClient::is_retryable_error(&api_error));
 
-        let param_error = SearxngError::InvalidParameters("invalid query".to_string());
-        assert!(!SearxngClient::is_retryable_error(&param_error));
+        let param_error = WebsurfxError::InvalidParameters("invalid query".to_string());
+        assert!(!WebsurfxClient::is_retryable_error(&param_error));
 
-        let no_results_error = SearxngError::NoResults;
-        assert!(!SearxngClient::is_retryable_error(&no_results_error));
+        let no_results_error = WebsurfxError::NoResults;
+        assert!(!WebsurfxClient::is_retryable_error(&no_results_error));
     }
 
     #[tokio::test]
-    #[ignore = "requires running SearXNG instance at localhost:8080"]
+    #[ignore = "requires a running Websurfx instance at localhost:8080"]
     async fn test_search_integration() {
         use std::env;
 
-        env::set_var("SEARXNG_BASE_URL", "http://localhost:8080");
+        env::set_var("WEBSURFX_BASE_URL", "http://localhost:8080");
         let config = Config::from_env().expect("Failed to load config");
-        let client = SearxngClient::new(config).expect("Failed to create client");
+        let client = WebsurfxClient::new(config).expect("Failed to create client");
 
         let params = SearchParams::new("rust programming language".to_string())
             .with_language("en".to_string());

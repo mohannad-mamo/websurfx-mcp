@@ -1106,22 +1106,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "searxng-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "reqwest",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-test",
- "url",
-]
-
-[[package]]
 name = "security-framework"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1653,6 +1637,22 @@ checksum = "3a1f95c0d03a47f4ae1f7a64643a6bb97465d9b740f0fa8f90ea33915c99a9a1"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "websurfx-mcp"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-test",
+ "url",
 ]
 
 [[package]]

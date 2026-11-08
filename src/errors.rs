@@ -6,7 +6,7 @@ mod jsonrpc_error {
 }
 
 #[derive(Error, Debug)]
-pub enum SearxngError {
+pub enum WebsurfxError {
     #[error("Invalid base URL: {0}")]
     InvalidBaseUrl(String),
 
@@ -22,7 +22,7 @@ pub enum SearxngError {
     #[error("Invalid environment variable: {0}")]
     InvalidEnvVar(String),
 
-    #[error("SearXNG API returned an error: {0}")]
+    #[error("Websurfx API returned an error: {0}")]
     ApiError(String),
 
     #[error("No results found for the given query")]
@@ -37,45 +37,45 @@ pub enum SearxngError {
     #[error("MCP server error: {0}")]
     McpError(String),
 }
-pub type SearxngResult<T> = Result<T, SearxngError>;
+pub type WebsurfxResult<T> = Result<T, WebsurfxError>;
 
-impl SearxngError {
+impl WebsurfxError {
     pub fn user_message(&self) -> String {
         match self {
-            SearxngError::InvalidBaseUrl(url) => {
-                format!("Invalid SearXNG server URL: {}", url)
+            WebsurfxError::InvalidBaseUrl(url) => {
+                format!("Invalid Websurfx server URL: {}", url)
             }
-            SearxngError::HttpError(e) => {
-                format!("Failed to connect to SearXNG server: {}", e)
+            WebsurfxError::HttpError(e) => {
+                format!("Failed to connect to Websurfx server: {}", e)
             }
-            SearxngError::JsonParseError(_) => {
-                "Received invalid response from SearXNG server".to_string()
+            WebsurfxError::JsonParseError(_) => {
+                "Received invalid response from Websurfx server".to_string()
             }
-            SearxngError::InvalidParameters(msg) => {
+            WebsurfxError::InvalidParameters(msg) => {
                 format!("Invalid search parameters: {}", msg)
             }
-            SearxngError::InvalidEnvVar(msg) => {
+            WebsurfxError::InvalidEnvVar(msg) => {
                 format!("Invalid environment variable: {}", msg)
             }
-            SearxngError::ApiError(msg) => {
-                format!("SearXNG API error: {}", msg)
+            WebsurfxError::ApiError(msg) => {
+                format!("Websurfx API error: {}", msg)
             }
-            SearxngError::NoResults => "No search results found for the given query".to_string(),
-            SearxngError::UrlError(_) => "Invalid URL format".to_string(),
-            SearxngError::IoError(e) => {
+            WebsurfxError::NoResults => "No search results found for the given query".to_string(),
+            WebsurfxError::UrlError(_) => "Invalid URL format".to_string(),
+            WebsurfxError::IoError(e) => {
                 format!("IO error: {}", e)
             }
-            SearxngError::McpError(msg) => {
+            WebsurfxError::McpError(msg) => {
                 format!("MCP server error: {}", msg)
             }
         }
     }
 }
 
-impl From<SearxngError> for rmcp::ErrorData {
-    fn from(err: SearxngError) -> Self {
+impl From<WebsurfxError> for rmcp::ErrorData {
+    fn from(err: WebsurfxError) -> Self {
         let error_code = match err {
-            SearxngError::InvalidParameters(_) => jsonrpc_error::INVALID_PARAMS,
+            WebsurfxError::InvalidParameters(_) => jsonrpc_error::INVALID_PARAMS,
             _ => jsonrpc_error::INTERNAL_ERROR,
         };
 
