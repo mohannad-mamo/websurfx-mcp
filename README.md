@@ -118,9 +118,13 @@ src/
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+See [NOTICE](NOTICE) for upstream and fork attribution.
 
 ## Acknowledgements
 
 Forked from [nicholasq/searxng-mcp](https://github.com/nicholasq/searxng-mcp)
 (MIT, Copyright (c) 2025 Nicholas Quezada), adapted for
 [Websurfx](https://github.com/neon-mmd/websurfx).
+
+Websurfx adaptation and subsequent modifications:
+Copyright (c) 2026 Mohannad (mohannad-mamo).
