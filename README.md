@@ -37,6 +37,8 @@ Optional environment variables:
 - `WEBSURFX_TIMEOUT_SECONDS`: HTTP timeout in seconds (default: 30)
 - `WEBSURFX_MAX_RESULTS`: Maximum number of results to display (default: 20)
 - `WEBSURFX_VALIDATION_TIMEOUT_SECONDS`: Validation timeout in seconds (default: 10)
+- `MCP_TRANSPORT`: `stdio` (default) or `http`
+- `MCP_HTTP_BIND`: Bind address used when `MCP_TRANSPORT=http` (default: `0.0.0.0:8001`)
 
 ## Usage
 
@@ -61,6 +63,27 @@ Optional environment variables:
 }
 ```
 
+### HTTP Transport
+
+stdio remains the default. To run the server as a centrally hosted MCP server:
+
+```bash
+MCP_TRANSPORT=http \
+MCP_HTTP_BIND=0.0.0.0:8001 \
+WEBSURFX_BASE_URL=http://localhost:8080 \
+websurfx-mcp
+```
+
+- MCP endpoint: `http://<host>:8001/mcp` (Streamable HTTP, stateless)
+- Health check: `http://<host>:8001/healthz`
+
+Point clients that support external MCP servers at the `/mcp` URL. For Open
+WebUI >= 0.6.31: Settings -> Admin -> Integrations -> External Tool Servers ->
+MCP (Streamable HTTP).
+
+The HTTP server still starts if Websurfx is temporarily unreachable; it logs a
+warning and `/healthz` remains available for readiness checks.
+
 ### Tool Parameters
 
 The `websurfx_search` tool accepts only the parameters Websurfx actually honors:
@@ -68,6 +91,10 @@ The `websurfx_search` tool accepts only the parameters Websurfx actually honors:
 - `query` (required): The search query string (max 512 characters)
 - `page` (optional): Page number, 1-based (1-50)
 - `safe_search` (optional): Safe search level - 0 (none) through 4 (strictest)
+
+The tool advertises `read_only_hint = true` and `open_world_hint = true`, plus
+`destructive_hint = false`, `idempotent_hint = false`, and a title. These are
+MCP hints for hosts; clients are not required to honor them.
 
 #### Unsupported by Websurfx
 
