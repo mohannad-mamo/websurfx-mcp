@@ -2,11 +2,6 @@
 
 A Model Context Protocol (MCP) server that provides web search capabilities through [Websurfx](https://github.com/neon-mmd/websurfx). This server allows MCP clients like Raycast, Zed, and OpenCode to perform web searches using your own Websurfx instance.
 
-> **Breaking change:** the tool is now named `websurfx_search` (previously
-> `searxng_search`) and the base URL environment variable is now
-> `WEBSURFX_BASE_URL` (previously `SEARXNG_BASE_URL`). Update your MCP client
-> configuration accordingly.
-
 ## Features
 
 - **Web Search**: Search the web using Websurfx's aggregated results from multiple search engines
