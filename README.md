@@ -205,6 +205,11 @@ src/
 └── errors.rs        # Error types and handling
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request
+guidelines. For security issues, follow [SECURITY.md](SECURITY.md).
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
