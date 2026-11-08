@@ -1,5 +1,7 @@
 # Websurfx MCP Server
 
+[![CI](https://github.com/mohannad-mamo/websurfx-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mohannad-mamo/websurfx-mcp/actions/workflows/ci.yml)
+
 A Model Context Protocol (MCP) server that provides web search capabilities through [Websurfx](https://github.com/neon-mmd/websurfx). This server allows MCP clients like Raycast, Zed, and OpenCode to perform web searches using your own Websurfx instance.
 
 ## Features
