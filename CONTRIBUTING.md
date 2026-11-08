@@ -51,6 +51,16 @@ docker build -t websurfx-mcp .
 docker buildx build --platform linux/amd64,linux/arm64 -t websurfx-mcp .
 ```
 
+### All-in-one image
+
+The all-in-one image pins Websurfx in two places:
+
+- `WEBSURFX_VERSION` in `.github/workflows/ci.yml`
+- the `WEBSURFX_TAG` default in `docker/all-in-one/Dockerfile`
+
+When bumping Websurfx, update both, refresh `docker/all-in-one/THIRD_PARTY.txt`,
+rebuild locally, and verify the Web UI, `/healthz`, bearer auth, and a search.
+
 ## Tests
 
 - The default test suite is offline and must stay that way.

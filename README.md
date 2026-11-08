@@ -93,8 +93,20 @@ Websurfx instance running directly on the host.
 
 ### All-in-one image (experimental)
 
-The repository also contains an all-in-one image that bundles Websurfx
-`v1.31.1` with the MCP server. It is not published yet; build it locally:
+The all-in-one image bundles Websurfx `v1.31.1` with the MCP server. It is
+published to GHCR for `linux/amd64` and `linux/arm64`:
+
+| Tag | Meaning |
+| --- | --- |
+| `edge` | Latest build from `main` |
+| `sha-<shortsha>` | Exact commit |
+| `0.3.0-ws1.31.1`, `0.3-ws1.31.1`, `latest` | Release tags |
+
+```bash
+docker pull ghcr.io/mohannad-mamo/websurfx-all-in-one:edge
+```
+
+Or build it locally:
 
 ```bash
 docker build -f docker/all-in-one/Dockerfile -t websurfx-all-in-one .
@@ -103,7 +115,7 @@ docker build -f docker/all-in-one/Dockerfile -t websurfx-all-in-one .
 ```bash
 docker run --rm -p 8080:8080 -p 8001:8001 \
   -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
-  websurfx-all-in-one
+  ghcr.io/mohannad-mamo/websurfx-all-in-one:edge
 ```
 
 - Web UI: `http://localhost:8080`
