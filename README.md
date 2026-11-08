@@ -1,6 +1,27 @@
 # Websurfx MCP Server
 
-[![CI](https://github.com/mohannad-mamo/websurfx-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/mohannad-mamo/websurfx-mcp/actions/workflows/ci.yml)
+<p align="center">
+  <a href="https://github.com/mohannad-mamo/websurfx-mcp/actions/workflows/ci.yml">
+    <img alt="CI" src="https://github.com/mohannad-mamo/websurfx-mcp/actions/workflows/ci.yml/badge.svg">
+  </a>
+  <a href="https://github.com/mohannad-mamo/websurfx-mcp/releases">
+    <img alt="Release" src="https://img.shields.io/github/v/release/mohannad-mamo/websurfx-mcp?style=flat-square">
+  </a>
+  <a href="https://hub.docker.com/r/mohmamo/websurfx-mcp">
+    <img alt="Docker pulls" src="https://img.shields.io/docker/pulls/mohmamo/websurfx-mcp?style=flat-square">
+  </a>
+  <a href="https://hub.docker.com/r/mohmamo/websurfx-all-in-one">
+    <img alt="All-in-one pulls" src="https://img.shields.io/docker/pulls/mohmamo/websurfx-all-in-one?style=flat-square">
+  </a>
+  <a href="LICENSE">
+    <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square">
+  </a>
+  <a href="docker/all-in-one/THIRD_PARTY.txt">
+    <img alt="All-in-one: AGPL-3.0" src="https://img.shields.io/badge/all--in--one-AGPL--3.0-orange?style=flat-square">
+  </a>
+  <img alt="Rust 1.85+" src="https://img.shields.io/badge/rust-1.85%2B-blue?style=flat-square">
+  <img alt="linux/amd64 and linux/arm64" src="https://img.shields.io/badge/platform-linux%2Famd64%20%7C%20linux%2Farm64-lightgrey?style=flat-square">
+</p>
 
 A Model Context Protocol (MCP) server that provides web search capabilities through [Websurfx](https://github.com/neon-mmd/websurfx). This server allows MCP clients like Raycast, Zed, and OpenCode to perform web searches using your own Websurfx instance.
 
