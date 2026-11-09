@@ -49,8 +49,17 @@ cargo install --path .
 
 ## Docker
 
-Prebuilt multi-arch images (`linux/amd64`, `linux/arm64`) are published to
-GHCR:
+Two multi-arch images (`linux/amd64`, `linux/arm64`) are published to both GHCR
+and Docker Hub:
+
+| Image | Bundles | GHCR | Docker Hub |
+| --- | --- | --- | --- |
+| `websurfx-mcp` | MCP server only; point it at an existing Websurfx | `ghcr.io/mohannad-mamo/websurfx-mcp` | `mohmamo/websurfx-mcp` |
+| `websurfx-all-in-one` | Websurfx `v1.31.1` + MCP server | `ghcr.io/mohannad-mamo/websurfx-all-in-one` | `mohmamo/websurfx-all-in-one` |
+
+### Tags
+
+Standalone:
 
 | Tag | Meaning |
 | --- | --- |
@@ -58,14 +67,61 @@ GHCR:
 | `sha-<shortsha>` | Exact commit |
 | `0.3.1`, `0.3`, `latest` | Release tags |
 
+All-in-one:
+
+| Tag | Meaning |
+| --- | --- |
+| `edge` | Latest build from `main` |
+| `sha-<shortsha>` | Exact commit |
+| `0.3.1-ws1.31.1`, `0.3-ws1.31.1`, `latest` | Release tags |
+
+Pull from either registry:
+
 ```bash
-docker pull ghcr.io/mohannad-mamo/websurfx-mcp:edge
+docker pull ghcr.io/mohannad-mamo/websurfx-mcp:0.3.1
+docker pull mohmamo/websurfx-mcp:0.3.1
+
+docker pull ghcr.io/mohannad-mamo/websurfx-all-in-one:0.3.1-ws1.31.1
+docker pull mohmamo/websurfx-all-in-one:0.3.1-ws1.31.1
 ```
 
-Use `:edge` for the latest development build or a release tag for a stable
+Use `:edge` for the latest development build, or a release tag for a stable
 version.
 
-### Build locally
+### Standalone image
+
+Use this when you already run Websurfx somewhere.
+
+#### stdio
+
+```bash
+IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:0.3.1
+# or: IMAGE=mohmamo/websurfx-mcp:0.3.1
+
+docker run --rm -i \
+  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
+  "$IMAGE"
+```
+
+#### HTTP
+
+```bash
+IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:0.3.1
+# or: IMAGE=mohmamo/websurfx-mcp:0.3.1
+
+docker run --rm -p 8001:8001 \
+  -e MCP_TRANSPORT=http \
+  -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
+  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
+  "$IMAGE"
+```
+
+Verify it is up with `curl http://localhost:8001/healthz`.
+
+On Linux, add `--add-host=host.docker.internal:host-gateway` to reach a
+Websurfx instance running directly on the host.
+
+#### Build locally
 
 ```bash
 docker build -t websurfx-mcp .
@@ -85,63 +141,33 @@ The runtime image is Alpine-based, runs as a non-root user, and includes
 `ca-certificates`, `LICENSE`, and `NOTICE` under
 `/usr/share/licenses/websurfx-mcp/`.
 
-### stdio
-
-```bash
-IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:edge
-
-docker run --rm -i \
-  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
-  "$IMAGE"
-```
-
-### HTTP
-
-```bash
-IMAGE=ghcr.io/mohannad-mamo/websurfx-mcp:edge
-
-docker run --rm -p 8001:8001 \
-  -e MCP_TRANSPORT=http \
-  -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
-  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
-  "$IMAGE"
-```
-
-Verify it is up with `curl http://localhost:8001/healthz`.
-
-On Linux, add `--add-host=host.docker.internal:host-gateway` to reach a
-Websurfx instance running directly on the host.
-
 ### All-in-one image (experimental)
 
-The all-in-one image bundles Websurfx `v1.31.1` with the MCP server. It is
-published to GHCR for `linux/amd64` and `linux/arm64`:
-
-| Tag | Meaning |
-| --- | --- |
-| `edge` | Latest build from `main` |
-| `sha-<shortsha>` | Exact commit |
-| `0.3.1-ws1.31.1`, `0.3-ws1.31.1`, `latest` | Release tags |
-
-```bash
-docker pull ghcr.io/mohannad-mamo/websurfx-all-in-one:edge
-```
-
-Or build it locally:
-
-```bash
-docker build -f docker/all-in-one/Dockerfile -t websurfx-all-in-one .
-```
+The all-in-one image bundles Websurfx `v1.31.1` with the MCP server.
 
 ```bash
 docker run --rm -p 8080:8080 -p 8001:8001 \
   -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
-  ghcr.io/mohannad-mamo/websurfx-all-in-one:edge
+  ghcr.io/mohannad-mamo/websurfx-all-in-one:0.3.1-ws1.31.1
+```
+
+Or use Docker Hub:
+
+```bash
+docker run --rm -p 8080:8080 -p 8001:8001 \
+  -e MCP_AUTH_TOKEN=replace-with-a-long-random-token \
+  mohmamo/websurfx-all-in-one:0.3.1-ws1.31.1
 ```
 
 - Web UI: `http://localhost:8080`
 - MCP: `http://localhost:8001/mcp`
 - Health: `http://localhost:8001/healthz`
+
+#### Build locally
+
+```bash
+docker build -f docker/all-in-one/Dockerfile -t websurfx-all-in-one .
+```
 
 The combined image contains MIT-licensed `websurfx-mcp` and AGPL-3.0-licensed
 Websurfx. The exact Websurfx source tarball and AGPL license are included at
