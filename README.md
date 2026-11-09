@@ -177,15 +177,28 @@ Websurfx. The exact Websurfx source tarball and AGPL license are included at
 
 ## Configuration
 
-Optional environment variables:
+| Variable | Default | Description |
+| --- | --- | --- |
+| `WEBSURFX_BASE_URL` | `http://localhost:8080` | Base URL of the Websurfx instance. |
+| `WEBSURFX_TIMEOUT_SECONDS` | `30` | HTTP timeout for search requests. Must be greater than 0. |
+| `WEBSURFX_MAX_RESULTS` | `20` | Maximum results included in the tool output. Must be greater than 0. |
+| `WEBSURFX_VALIDATION_TIMEOUT_SECONDS` | `10` | Timeout for the startup/health validation request. Must be greater than 0. |
+| `MCP_TRANSPORT` | `stdio` | `stdio` or `http`. |
+| `MCP_HTTP_BIND` | `0.0.0.0:8001` | Bind address for HTTP mode. |
+| `MCP_AUTH_TOKEN` | unset | Optional bearer token required on `/mcp` in HTTP mode. Ignored by stdio. |
 
-- `WEBSURFX_BASE_URL`: The URL of your Websurfx instance (default: `"http://localhost:8080"`)
-- `WEBSURFX_TIMEOUT_SECONDS`: HTTP timeout in seconds (default: 30)
-- `WEBSURFX_MAX_RESULTS`: Maximum number of results to display (default: 20)
-- `WEBSURFX_VALIDATION_TIMEOUT_SECONDS`: Validation timeout in seconds (default: 10)
-- `MCP_TRANSPORT`: `stdio` (default) or `http`
-- `MCP_HTTP_BIND`: Bind address used when `MCP_TRANSPORT=http` (default: `0.0.0.0:8001`)
-- `MCP_AUTH_TOKEN`: Optional bearer token required on `/mcp` when set
+### Transport Modes
+
+| Mode | Best for | Authentication |
+| --- | --- | --- |
+| `stdio` | Local MCP clients launched by the host | Not used |
+| `http` | Shared or remote MCP clients | Optional bearer token via `MCP_AUTH_TOKEN` |
+
+### Startup Behavior
+
+- `stdio` validates `WEBSURFX_BASE_URL` at startup and exits if Websurfx is unreachable.
+- `http` logs a warning if Websurfx is unreachable but still starts, so `/healthz` can come up.
+- Configuration is read at startup; restart the process after changing environment variables.
 
 ## Usage
 
@@ -217,6 +230,7 @@ stdio remains the default. To run the server as a centrally hosted MCP server:
 ```bash
 MCP_TRANSPORT=http \
 MCP_HTTP_BIND=0.0.0.0:8001 \
+MCP_AUTH_TOKEN=replace-with-a-long-random-token \
 WEBSURFX_BASE_URL=http://localhost:8080 \
 websurfx-mcp
 ```
@@ -231,28 +245,86 @@ MCP (Streamable HTTP).
 The HTTP server still starts if Websurfx is temporarily unreachable; it logs a
 warning and `/healthz` remains available for readiness checks.
 
-## Security
+### Authentication
 
-The HTTP transport is **unauthenticated by default**. Set `MCP_AUTH_TOKEN` to
-require `Authorization: Bearer <token>` on `/mcp`; `/healthz` remains public for
-readiness checks.
+HTTP mode is **unauthenticated by default**. Set `MCP_AUTH_TOKEN` to require a
+bearer token on `/mcp`. `/healthz` always remains public for readiness checks.
 
-Generate a token with:
+Generate and export a token:
 
 ```bash
-openssl rand -hex 32
+export MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
 ```
 
-- Without `MCP_AUTH_TOKEN`, anyone who can reach `/mcp` can run searches through
-  your Websurfx instance.
-- Bind to loopback (`MCP_HTTP_BIND=127.0.0.1:8001`) when the client runs on the
-  same machine.
-- If the server must be reachable over a network, use TLS and preferably a
-  reverse proxy. Bearer tokens sent over plain HTTP are visible on the network.
-- Docker's `-p 8001:8001` listens on all host interfaces by default.
-- Websurfx's own rate limits and safe-search settings still apply.
+Run the server with it:
 
-Use stdio for local clients unless you specifically need the HTTP transport.
+```bash
+MCP_TRANSPORT=http \
+MCP_HTTP_BIND=0.0.0.0:8001 \
+MCP_AUTH_TOKEN="$MCP_AUTH_TOKEN" \
+WEBSURFX_BASE_URL=http://localhost:8080 \
+websurfx-mcp
+```
+
+With Docker:
+
+```bash
+docker run --rm -p 8001:8001 \
+  -e MCP_TRANSPORT=http \
+  -e MCP_AUTH_TOKEN="$MCP_AUTH_TOKEN" \
+  -e WEBSURFX_BASE_URL=http://host.docker.internal:8080 \
+  ghcr.io/mohannad-mamo/websurfx-mcp:0.3.1
+```
+
+Clients must send:
+
+```http
+Authorization: Bearer <token>
+```
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8001/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "Authorization: Bearer $MCP_AUTH_TOKEN" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+```
+
+Behavior:
+
+- `/mcp` returns `401` when the token is missing or wrong.
+- `/healthz` stays public.
+- Token comparison is constant-time.
+- If `MCP_AUTH_TOKEN` is unset, no authentication is required.
+- The token is read at startup; restart the process after changing it.
+- The `stdio` transport ignores `MCP_AUTH_TOKEN`.
+
+#### Kubernetes Secret
+
+```bash
+kubectl -n apps create secret generic websurfx-mcp-auth \
+  --from-literal=MCP_AUTH_TOKEN="$(openssl rand -hex 32)"
+```
+
+Read the token back for your client configuration:
+
+```bash
+kubectl -n apps get secret websurfx-mcp-auth \
+  -o jsonpath='{.data.MCP_AUTH_TOKEN}' | base64 -d
+```
+
+Reference it from the Deployment:
+
+```yaml
+env:
+  - name: MCP_AUTH_TOKEN
+    valueFrom:
+      secretKeyRef:
+        name: websurfx-mcp-auth
+        key: MCP_AUTH_TOKEN
+```
 
 ### Tool Parameters
 
@@ -293,6 +365,20 @@ Ask Zed:
 - "Search for 'rust programming language'"
 - "Find recent news about climate change"
 - "Search for 'machine learning' tutorials"
+
+## Security
+
+- The HTTP transport is unauthenticated unless `MCP_AUTH_TOKEN` is set.
+- Bind to loopback (`MCP_HTTP_BIND=127.0.0.1:8001`) when the client runs on the
+  same machine.
+- If the server must be reachable over a network, use TLS and preferably a
+  reverse proxy. Bearer tokens sent over plain HTTP are visible on the network.
+- Docker's `-p 8001:8001` listens on all host interfaces by default.
+- In the all-in-one image, keep the Websurfx Web UI port `8080` internal. The
+  Web UI has no authentication.
+- Websurfx's own rate limits and safe-search settings still apply.
+
+Use stdio for local clients unless you specifically need the HTTP transport.
 
 ## Development
 
